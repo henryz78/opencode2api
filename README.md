@@ -104,6 +104,22 @@ ghcr.io/henryz78/opencode2api
 
 工作流使用仓库自带的 `GITHUB_TOKEN`，不需要额外配置 Docker Hub 密钥。首次发布后，可在仓库的 **Packages** 中调整镜像的可见性和访问权限。
 
+## Railway 部署
+
+可以直接在 Railway 里选择 Docker Image，填写：
+
+```text
+ghcr.io/henryz78/opencode2api:latest
+```
+
+建议在 Railway 网页端给服务挂载一个 Volume，路径为：
+
+```text
+/var/lib/opencode2api
+```
+
+镜像会自动识别 Railway 注入的 `PORT`，默认把 WebUI/Playground 暴露在该端口，API 仅监听容器内部端口。`STATE_DIR`、`CONFIG_PATH` 和端口变量不需要额外填写；首次启动会在 Volume 中生成 `config.json`，之后通过 WebUI 修改并保存即可。首次登录后请立即修改默认管理员密码，并清除无效的示例 Key。
+
 ## 模型元数据与匿名模式
 
 匿名模式使用 [models.dev](https://models.dev) 的 OpenCode provider 元数据判断模型是否为零价格模型，不再只依赖模型 ID 中是否包含 `free`。元数据默认每天后台刷新一次，并写入 `config.json.models.dev.json` 作为本地缓存；刷新失败时继续使用上一次成功记录，并在 WebUI 的调试信息页显示缓存状态。
