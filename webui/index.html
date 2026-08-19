@@ -36,7 +36,7 @@
     }
     * { box-sizing: border-box; }
     html { background: var(--paper); }
-    body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.72; }
+    body { margin: 0; min-width: 320px; overflow-x: hidden; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.72; }
     body, button, input, textarea, select { font-synthesis: none; }
     button, input, textarea, select { font: inherit; }
     button { cursor: pointer; }
@@ -87,13 +87,13 @@
     .workspace-nav button:hover, .workspace-nav button.active { color: var(--ink); }
     .workspace-nav button.active { box-shadow: inset 0 -3px var(--accent); }
     .workspace-nav .nav-index { color: var(--accent); }
-    .content-shell { display: grid; grid-template-columns: minmax(160px, 17vw) minmax(0, 1fr); gap: clamp(28px, 5vw, 78px); width: min(1420px, calc(100% - clamp(36px, 8vw, 116px))); margin: 0 auto; padding: 44px 0 86px; }
+    .content-shell { display: grid; grid-template-columns: minmax(160px, 17vw) minmax(0, 1fr); gap: clamp(28px, 5vw, 78px); width: min(1420px, calc(100% - clamp(36px, 8vw, 116px))); min-width: 0; margin: 0 auto; padding: 44px 0 86px; }
     .context-rail { border-right: 1px solid var(--line); padding-right: 22px; }
     .context-kicker { display: block; }
     .context-rail h1 { margin: 13px 0 17px; font: 500 clamp(29px, 3.3vw, 52px)/1.02 var(--display); letter-spacing: -.055em; }
     .context-rail p { color: var(--muted); font-size: 13px; }
     .context-note { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--faint); font: 10px/1.65 var(--mono); }
-    .main { min-width: 0; }
+    .main { min-width: 0; max-width: 100%; overflow: hidden; }
     .page-heading { display: flex; justify-content: space-between; gap: 24px; align-items: end; border-bottom: 1px solid var(--ink); padding-bottom: 26px; }
     .page-heading h2 { margin-top: 11px; font: 500 clamp(40px, 5.5vw, 78px)/.98 var(--display); letter-spacing: -.065em; }
     .page-heading p { max-width: 300px; color: var(--muted); font-size: 13px; }
@@ -158,10 +158,59 @@
     .config-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
     .form-hint { margin-top: 6px; color: var(--faint); font-size: 12px; }
 
+    /* Debug / playground */
+    .debug-grid { display: grid; grid-template-columns: minmax(270px, .72fr) minmax(0, 1.28fr); gap: 28px; margin-top: 30px; }
+    .debug-panel { min-width: 0; border-top: 1px solid var(--ink); padding-top: 12px; }
+    .debug-panel-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; margin-bottom: 10px; }
+    .debug-panel-head h3 { font: 500 25px/1.2 var(--display); letter-spacing: -.035em; }
+    .debug-panel-head span { color: var(--faint); font: 10px var(--mono); }
+    .debug-note { margin-bottom: 20px; color: var(--muted); font-size: 13px; }
+    .debug-model-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .debug-status { min-height: 22px; margin-top: 6px; color: var(--faint); font: 11px var(--mono); }
+    .debug-status.ok { color: var(--ok); }
+    .debug-status.bad { color: var(--bad); }
+    .debug-options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+    .debug-privacy { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 20px; border-top: 1px solid var(--line); padding-top: 11px; color: var(--faint); font: 11px var(--mono); }
+    .debug-privacy .state { color: var(--ok); }
+    .debug-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+    .debug-error { min-height: 25px; margin-top: 11px; color: var(--bad); font-size: 13px; }
+    .debug-transcript { min-height: 390px; max-height: 58vh; overflow: auto; border: 1px solid var(--line); background: var(--paper-soft); padding: 15px; }
+    .debug-empty { display: grid; min-height: 350px; place-items: center; color: var(--faint); text-align: center; font-size: 13px; }
+    .debug-message { max-width: 86%; margin: 0 0 14px; border: 1px solid var(--line); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+    .debug-message:last-child { margin-bottom: 0; }
+    .debug-message.user { margin-left: auto; border-color: var(--accent); background: var(--accent-soft); }
+    .debug-message.assistant { margin-right: auto; background: #fffaf0; }
+    .debug-message-meta { display: block; margin-bottom: 4px; color: var(--faint); font: 10px var(--mono); text-transform: uppercase; }
+    .debug-meta { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 9px 0; color: var(--faint); font: 11px var(--mono); }
+    .debug-raw { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+    .debug-raw summary { cursor: pointer; color: var(--muted); font: 11px var(--mono); }
+    .debug-raw pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 10px 0 0; border: 1px solid var(--line); background: var(--paper-soft); padding: 12px; color: var(--muted); font: 11px/1.65 var(--mono); }
+    .diagnostic-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-top: 30px; border-bottom: 1px solid var(--ink); padding-bottom: 13px; }
+    .diagnostic-caption { margin-top: 8px; color: var(--muted); font-size: 13px; }
+    .diagnostic-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--ink); }
+    .diagnostic-card { min-height: 112px; border-right: 1px solid var(--line); padding: 15px 15px 12px 0; }
+    .diagnostic-card + .diagnostic-card { padding-left: 15px; }
+    .diagnostic-card:last-child { border-right: 0; }
+    .diagnostic-card strong { display: block; margin-top: 14px; font: 500 24px/1.1 var(--display); letter-spacing: -.035em; }
+    .diagnostic-card small { display: block; margin-top: 7px; color: var(--faint); font: 11px var(--mono); }
+    .diagnostic-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 30px; }
+    .diagnostic-list { display: grid; gap: 0; border-top: 1px solid var(--line); }
+    .diagnostic-list-row { display: grid; grid-template-columns: 1fr auto; gap: 15px; border-bottom: 1px solid var(--line); padding: 10px 0; font-size: 13px; }
+    .diagnostic-list-row span:last-child { color: var(--muted); font: 11px var(--mono); text-align: right; }
+    .diagnostic-trace { min-height: 150px; border-top: 1px solid var(--line); padding: 13px 0; color: var(--muted); font: 12px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .diagnostic-events { margin-top: 30px; }
+    .diagnostic-event-list { border-top: 1px solid var(--line); }
+    .diagnostic-event { display: grid; grid-template-columns: 82px 55px 100px minmax(0, 1fr); gap: 9px; border-bottom: 1px solid var(--line); padding: 9px 0; font: 12px/1.65 var(--mono); }
+    .diagnostic-event .time, .diagnostic-event .component { color: var(--faint); }
+    .diagnostic-event .level { color: var(--ok); font-weight: 700; }
+    .diagnostic-event .level.warn { color: var(--warn); }
+    .diagnostic-event .level.error { color: var(--bad); }
+
     /* Logs */
-    .log-tools { display: grid; grid-template-columns: 140px 160px minmax(170px, 1fr) auto; gap: 8px; margin: 17px 0; }
-    .logs { border-top: 1px solid var(--ink); background: var(--paper-soft); font: 12px/1.65 var(--mono); }
-    .log { display: grid; grid-template-columns: 80px 52px 100px minmax(0, 1fr); gap: 9px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .log-tools { display: grid; grid-template-columns: 140px 160px minmax(170px, 1fr) auto; gap: 8px; min-width: 0; margin: 17px 0; }
+    .logs { max-width: 100%; max-height: min(62vh, 720px); overflow: auto; border-top: 1px solid var(--ink); background: var(--paper-soft); font: 12px/1.65 var(--mono); }
+    .log { display: grid; grid-template-columns: 80px 52px 100px minmax(0, 1fr); gap: 9px; min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .log > span:last-child, .log .component { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
     .log:hover { background: #fffaf052; }
     .log .time, .log .component { color: var(--faint); }
     .log .level { color: var(--ok); font-weight: 700; }
@@ -212,12 +261,20 @@
       .metric:nth-child(4) { border-right: 0; }
       .metric:nth-child(3), .metric:nth-child(4) { border-bottom: 0; padding-top: 16px; }
       .breakdowns { grid-template-columns: 1fr 1fr; }
-      .form-grid, .log-tools { grid-template-columns: 1fr; }
+      .form-grid, .log-tools, .debug-grid, .diagnostic-grid { grid-template-columns: 1fr; }
       .form-grid .full { grid-column: auto; }
       .config-actions { align-items: stretch; flex-direction: column; }
       .log { grid-template-columns: 68px 48px minmax(0, 1fr); }
       .log .component { display: none; }
       .account-actions { align-items: stretch; flex-direction: column; }
+      .debug-message { max-width: 94%; }
+      .diagnostic-toolbar { align-items: flex-start; flex-direction: column; }
+      .diagnostic-cards { grid-template-columns: 1fr 1fr; }
+      .diagnostic-card:nth-child(2) { border-right: 0; }
+      .diagnostic-card:nth-child(3), .diagnostic-card:nth-child(4) { border-top: 1px solid var(--line); }
+      .diagnostic-card:nth-child(4) { border-right: 0; }
+      .diagnostic-event { grid-template-columns: 68px 48px minmax(0, 1fr); }
+      .diagnostic-event .component { display: none; }
     }
   </style>
 </head>
@@ -253,9 +310,11 @@
     </header>
     <nav class="workspace-nav" aria-label="工作区导航">
       <button type="button" data-page="overview" class="active"><span class="nav-index">01</span><span>运行总览</span></button>
-      <button type="button" data-page="config"><span class="nav-index">02</span><span>配置中心</span></button>
-      <button type="button" data-page="logs"><span class="nav-index">03</span><span>实时日志</span></button>
-      <button type="button" data-page="account"><span class="nav-index">04</span><span>账号安全</span></button>
+      <button type="button" data-page="playground"><span class="nav-index">02</span><span>Playground</span></button>
+      <button type="button" data-page="debug"><span class="nav-index">03</span><span>调试信息</span></button>
+      <button type="button" data-page="config"><span class="nav-index">04</span><span>配置中心</span></button>
+      <button type="button" data-page="logs"><span class="nav-index">05</span><span>实时日志</span></button>
+      <button type="button" data-page="account"><span class="nav-index">06</span><span>账号安全</span></button>
     </nav>
     <div class="content-shell">
       <aside class="context-rail">
@@ -280,6 +339,31 @@
             <section class="ledger"><div class="ledger-head"><h3>Key 池</h3><span>RESOURCES.KEYS</span></div><table class="table"><thead><tr><th>ID</th><th>Tier</th><th>状态</th></tr></thead><tbody id="key-table"><tr><td colspan="3" class="empty">等待监控数据</td></tr></tbody></table></section>
           </div>
           <section class="ledger"><div class="ledger-head"><h3>最近一小时聚合</h3><span>TOP 10 · ENDPOINT / STATUS / MODEL / TIER</span></div><div id="breakdowns" class="breakdowns"><div><h3>端点</h3><div class="empty">等待监控数据</div></div><div><h3>状态码</h3><div class="empty">等待监控数据</div></div><div><h3>模型</h3><div class="empty">等待监控数据</div></div><div><h3>Tier</h3><div class="empty">等待监控数据</div></div></div></section>
+        </section>
+
+        <section id="page-playground" class="page hidden">
+          <div class="debug-grid">
+            <form id="debug-form" class="debug-panel">
+              <div class="debug-panel-head"><h3>测试设置</h3><span>ADMIN PROXY</span></div>
+              <p class="debug-note">模型请求会通过当前管理会话转发到本地 API。浏览器不会拿到真实 Server Key，也不会把 Key 写入 localStorage。</p>
+              <div class="field"><label for="debug-model">模型</label><div class="debug-model-control"><select id="debug-model" required><option value="">先获取模型</option></select><button id="debug-refresh-models" class="button" type="button">获取模型</button></div><div id="debug-model-status" class="debug-status">尚未读取模型目录</div></div>
+              <div class="field"><label for="debug-system">系统提示词（可选）</label><textarea id="debug-system" rows="4" placeholder="例如：请简洁回答，使用中文。"></textarea></div>
+              <div class="field"><label for="debug-prompt">用户消息</label><textarea id="debug-prompt" rows="7" required placeholder="输入一条测试消息">Hi</textarea></div>
+              <div class="debug-options"><div class="field"><label for="debug-temperature">TEMPERATURE</label><input id="debug-temperature" type="number" min="0" max="2" step="0.1" value="0.7"></div><div class="field"><label for="debug-max-tokens">MAX TOKENS</label><input id="debug-max-tokens" type="number" min="1" step="1" value="1024"></div></div>
+              <div class="debug-privacy"><span class="state ok">服务端 Key</span><span>session only · no storage</span></div>
+              <div class="debug-actions"><button id="debug-quick-hi" class="button teal" type="button">发送 Hi</button><button id="debug-clear" class="button" type="button">清空输入</button><button id="debug-send" class="button primary" type="submit">发送测试</button></div>
+              <div id="debug-error" class="debug-error" role="alert"></div>
+            </form>
+            <section class="debug-panel"><div class="debug-panel-head"><h3>对话工作台</h3><div class="inline"><span id="debug-latency" class="debug-status">未发送</span><button id="debug-reset" class="button" type="button">清空记录</button></div></div><div id="debug-transcript" class="debug-transcript" aria-live="polite"><div class="debug-empty">获取模型后发送一条消息<br>这里会显示完整的测试往返</div></div><div class="debug-meta"><span id="debug-model-used">MODEL —</span><span id="debug-request-id">REQUEST —</span></div><details class="debug-raw"><summary>查看原始响应 JSON</summary><pre id="debug-raw">{}</pre></details></section>
+          </div>
+        </section>
+
+        <section id="page-debug" class="page hidden">
+          <div class="diagnostic-toolbar"><div><span class="eyebrow">03 / diagnostic surface</span><p class="diagnostic-caption">这里不发起对话，只把服务当前的可解释信号放在一起。</p></div><button id="diagnostic-refresh" class="button" type="button">刷新诊断</button></div>
+          <div id="diagnostic-state" class="debug-status">等待读取状态</div>
+          <div id="diagnostic-cards" class="diagnostic-cards"><div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>—</strong><small>尚未发送</small></div></div>
+          <div class="diagnostic-grid"><section class="debug-panel"><div class="debug-panel-head"><h3>路由表面</h3><span>AVAILABLE SURFACES</span></div><div id="diagnostic-routes" class="diagnostic-list"></div></section><section class="debug-panel"><div class="debug-panel-head"><h3>最近请求</h3><span>TRACE WINDOW</span></div><div id="diagnostic-trace" class="diagnostic-trace">还没有来自 Playground 的请求。</div></section></div>
+          <section class="debug-panel diagnostic-events"><div class="debug-panel-head"><h3>相关事件</h3><span>RECENT EVENT STREAM</span></div><div id="diagnostic-events" class="diagnostic-event-list"><div class="logs-empty">等待实时事件……</div></div></section>
         </section>
 
         <section id="page-config" class="page hidden">
@@ -318,6 +402,10 @@
     let paused = false;
     let monitorTimer = null;
     let logRenderPending = false;
+    let debugModelsLoaded = false;
+    let debugHistory = [];
+    let lastDebugTrace = null;
+    let lastAPIRequestID = '';
 
     async function api(path, options = {}) {
       options.headers = { ...(options.headers || {}), Accept: 'application/json' };
@@ -329,6 +417,7 @@
         throw new Error('登录已失效');
       }
       if (response.status === 204) return null;
+      if (response.headers.get('X-Request-Id')) lastAPIRequestID = response.headers.get('X-Request-Id');
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error && data.error.message ? data.error.message : 'HTTP ' + response.status);
       return data;
@@ -354,9 +443,11 @@
 
     const titles = {
       overview: { title: '运行总览', sub: '最近一小时的服务状态', index: '01 / operating record' },
-      config: { title: '配置中心', sub: '按影响范围分组，验证后原子保存并立即应用', index: '02 / configuration center' },
-      logs: { title: '实时日志', sub: '结构化事件流 · 支持筛选、暂停与断流提示', index: '03 / event stream' },
-      account: { title: '账号安全', sub: '修改后会撤销所有登录会话', index: '04 / account security' }
+      playground: { title: 'Playground', sub: '获取模型并发送一条真实对话测试', index: '02 / playground' },
+      debug: { title: '调试信息', sub: '查看模型目录、路由、资源和最近一次请求', index: '03 / diagnostic surface' },
+      config: { title: '配置中心', sub: '按影响范围分组，验证后原子保存并立即应用', index: '04 / configuration center' },
+      logs: { title: '实时日志', sub: '结构化事件流 · 支持筛选、暂停与断流提示', index: '05 / event stream' },
+      account: { title: '账号安全', sub: '修改后会撤销所有登录会话', index: '06 / account security' }
     };
 
     function setPage(page) {
@@ -369,6 +460,8 @@
       $('#rail-index').textContent = meta.index;
       $('#rail-page-title').textContent = meta.title;
       $('#rail-page-sub').textContent = meta.sub;
+      if (page === 'playground' && !debugModelsLoaded) loadDebugModels();
+      if (page === 'debug') loadDiagnostics();
     }
 
     async function boot() {
@@ -417,6 +510,158 @@
     });
 
     $$('.workspace-nav button').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
+
+    function setDebugError(message, bad = true) {
+      const el = $('#debug-error');
+      el.textContent = message || '';
+      el.style.color = bad ? 'var(--bad)' : 'var(--ok)';
+    }
+
+    async function loadDebugModels() {
+      const select = $('#debug-model');
+      const status = $('#debug-model-status');
+      const refresh = $('#debug-refresh-models');
+      refresh.disabled = true;
+      status.className = 'debug-status';
+      status.textContent = '正在读取当前模型目录……';
+      try {
+        const result = await api('/api/debug/models');
+        const models = Array.isArray(result.data) ? result.data.filter(item => item && item.id) : [];
+        select.innerHTML = models.length ? models.map(item => '<option value="' + esc(item.id) + '">' + esc(item.id) + '</option>').join('') : '<option value="">暂无可用模型</option>';
+        debugModelsLoaded = true;
+        if (models.length) {
+          status.className = 'debug-status ok';
+          status.textContent = '已获取 ' + models.length + ' 个可用模型；默认选中第一个。';
+          setDebugError('');
+        } else {
+          status.className = 'debug-status bad';
+          status.textContent = '模型目录为空，先检查上游、Key、Proxy 或模型刷新状态。';
+        }
+      } catch (error) {
+        debugModelsLoaded = false;
+        status.className = 'debug-status bad';
+        status.textContent = '获取失败';
+        setDebugError(error.message);
+      } finally {
+        refresh.disabled = false;
+      }
+    }
+
+    async function loadDiagnostics() {
+      const state = $('#diagnostic-state');
+      state.className = 'debug-status';
+      state.textContent = '正在读取当前运行状态……';
+      try {
+        const data = await api('/api/monitor');
+        const resources = data.resources || {};
+        const models = resources.models || {};
+        const proxies = Array.isArray(resources.proxies) ? resources.proxies : [];
+        const keys = Array.isArray(resources.keys) ? resources.keys : [];
+        const healthyProxies = proxies.filter(proxy => proxy.healthy).length;
+        const coolingKeys = keys.filter(key => key.cooldown_until).length;
+        const refreshed = models.updated_at ? new Date(models.updated_at).toLocaleString() : '尚未刷新';
+        const routing = config ? String(config.prefer || '—').toUpperCase() + ' · anonymous ' + (config.anonymous ? 'on' : 'off') : '—';
+        const traceStatus = lastDebugTrace ? lastDebugTrace.status : '—';
+        $('#diagnostic-cards').innerHTML = '<div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>' + (models.exposed || 0) + ' / ' + (models.total || 0) + '</strong><small>可暴露 / 已发现 · ' + esc(refreshed) + '</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>' + esc(routing) + '</strong><small>当前优先级与匿名通道</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>' + healthyProxies + ' / ' + proxies.length + '</strong><small>健康 Proxy · Key ' + keys.length + '，冷却 ' + coolingKeys + '</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>' + esc(traceStatus) + '</strong><small>' + (lastDebugTrace ? esc(lastDebugTrace.elapsed_ms + ' ms · ' + lastDebugTrace.model) : '尚未从 Playground 发起请求') + '</small></div>';
+        $('#diagnostic-routes').innerHTML = '<div class="diagnostic-list-row"><span>GET /v1/models</span><span>模型目录</span></div><div class="diagnostic-list-row"><span>POST /v1/chat/completions</span><span>Playground</span></div><div class="diagnostic-list-row"><span>POST /v1/responses</span><span>Responses</span></div><div class="diagnostic-list-row"><span>POST /v1/messages</span><span>Anthropic</span></div><div class="diagnostic-list-row"><span>GET /healthz</span><span>无需 API Key</span></div>';
+        $('#diagnostic-trace').textContent = lastDebugTrace ? JSON.stringify(lastDebugTrace, null, 2) : '还没有来自 Playground 的请求。';
+        renderDiagnosticEvents();
+        state.className = 'debug-status ok';
+        state.textContent = '状态已更新 · ' + new Date().toLocaleTimeString();
+      } catch (error) {
+        state.className = 'debug-status bad';
+        state.textContent = '读取失败 · ' + error.message;
+      }
+    }
+
+    function renderDiagnosticEvents() {
+      const requestID = lastDebugTrace && lastDebugTrace.request_id;
+      const candidates = logEvents.filter(item => !requestID || JSON.stringify(item).includes(requestID)).slice(-12);
+      if (!candidates.length) {
+        $('#diagnostic-events').innerHTML = '<div class="logs-empty">还没有可关联的事件。发送一次 Playground 请求后，这里会显示相关链路。</div>';
+        return;
+      }
+      $('#diagnostic-events').innerHTML = candidates.map(item => '<div class="diagnostic-event"><span class="time">' + new Date(item.time).toLocaleTimeString() + '</span><span class="level ' + (item.level === 'error' ? 'error' : item.level === 'warn' ? 'warn' : '') + '">' + esc(item.level) + '</span><span class="component">' + esc(item.component || 'core') + '</span><span>' + esc(item.message) + ' <span class="component">' + esc(JSON.stringify(item.fields || {})) + '</span></span></div>').join('');
+    }
+
+    function extractDebugText(payload) {
+      const choice = payload && payload.choices && payload.choices[0];
+      let content = choice && choice.message ? choice.message.content : choice && choice.text;
+      if (Array.isArray(content)) {
+        content = content.map(part => typeof part === 'string' ? part : part && (part.text || part.content || '')).join('');
+      }
+      if (typeof content === 'string' && content.trim()) return content;
+      if (typeof (payload && payload.output_text) === 'string' && payload.output_text.trim()) return payload.output_text;
+      return '响应已返回，但没有找到可显示的文本内容。请查看原始 JSON。';
+    }
+
+    function renderDebugTranscript(items = debugHistory) {
+      const transcript = $('#debug-transcript');
+      if (!items.length) {
+        transcript.innerHTML = '<div class="debug-empty">获取模型后发送一条消息<br>这里会显示完整的测试往返</div>';
+        return;
+      }
+      transcript.innerHTML = items.map(item => '<div class="debug-message ' + (item.role === 'user' ? 'user' : 'assistant') + '"><span class="debug-message-meta">' + (item.role === 'user' ? 'you' : 'assistant') + '</span>' + esc(item.content) + '</div>').join('');
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    async function sendDebugMessage(quickPrompt) {
+      const model = $('#debug-model').value;
+      const prompt = (quickPrompt !== undefined ? quickPrompt : $('#debug-prompt').value).trim();
+      if (!model) {
+        setDebugError('请先获取并选择一个模型。');
+        return;
+      }
+      if (!prompt) {
+        setDebugError('请输入一条用户消息。');
+        $('#debug-prompt').focus();
+        return;
+      }
+      const messages = [];
+      const system = $('#debug-system').value.trim();
+      if (system) messages.push({ role: 'system', content: system });
+      messages.push(...debugHistory, { role: 'user', content: prompt });
+      renderDebugTranscript(messages);
+      setDebugError('');
+      $('#debug-send').disabled = true;
+      $('#debug-quick-hi').disabled = true;
+      const started = performance.now();
+      lastAPIRequestID = '';
+      try {
+        const result = await api('/api/debug/chat', {
+          method: 'POST',
+          body: JSON.stringify({ model, messages, temperature: Number($('#debug-temperature').value), max_tokens: Number($('#debug-max-tokens').value) })
+        });
+        const answer = extractDebugText(result);
+        debugHistory.push({ role: 'user', content: prompt }, { role: 'assistant', content: answer });
+        renderDebugTranscript();
+        $('#debug-raw').textContent = JSON.stringify(result, null, 2);
+        $('#debug-model-used').textContent = 'MODEL ' + model;
+        const elapsed = Math.round(performance.now() - started);
+        const requestID = lastAPIRequestID || result.id || '—';
+        $('#debug-request-id').textContent = 'REQUEST ' + requestID;
+        $('#debug-latency').textContent = elapsed + ' ms';
+        lastDebugTrace = { status: 'ok', model, request_id: requestID, elapsed_ms: elapsed, response_id: result.id || '', at: new Date().toISOString() };
+        if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
+      } catch (error) {
+        const elapsed = Math.round(performance.now() - started);
+        setDebugError(error.message);
+        $('#debug-latency').textContent = '失败 · ' + elapsed + ' ms';
+        lastDebugTrace = { status: 'error', model, request_id: lastAPIRequestID || '—', elapsed_ms: elapsed, error: error.message, at: new Date().toISOString() };
+        if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
+      } finally {
+        $('#debug-send').disabled = false;
+        $('#debug-quick-hi').disabled = false;
+      }
+    }
+
+    $('#debug-refresh-models').addEventListener('click', loadDebugModels);
+    $('#diagnostic-refresh').addEventListener('click', loadDiagnostics);
+    $('#debug-form').addEventListener('submit', event => { event.preventDefault(); sendDebugMessage(); });
+    $('#debug-quick-hi').addEventListener('click', () => { $('#debug-prompt').value = 'Hi'; sendDebugMessage('Hi'); });
+    $('#debug-clear').addEventListener('click', () => { $('#debug-system').value = ''; $('#debug-prompt').value = ''; setDebugError(''); });
+    $('#debug-reset').addEventListener('click', () => { debugHistory = []; lastDebugTrace = null; renderDebugTranscript(); $('#debug-raw').textContent = '{}'; $('#debug-model-used').textContent = 'MODEL —'; $('#debug-request-id').textContent = 'REQUEST —'; $('#debug-latency').textContent = '未发送'; setDebugError(''); if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics(); });
+    $('#debug-prompt').addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); sendDebugMessage(); } });
 
     async function loadConfig() {
       config = await api('/api/config');
@@ -603,10 +848,12 @@
       const rows = logEvents.filter(item => (!level || item.level === level) && (!component || (item.component || '').toLowerCase().includes(component)) && (!query || JSON.stringify(item).toLowerCase().includes(query))).slice(-500);
       if (!rows.length) {
         $('#log-list').innerHTML = '<div class="logs-empty">暂无符合条件的事件。连接 SSE 后，最新事件会出现在这里。</div>';
+        renderDiagnosticEvents();
         return;
       }
       $('#log-list').innerHTML = rows.map(item => '<div class="log"><span class="time">' + new Date(item.time).toLocaleTimeString() + '</span><span class="level ' + (item.level === 'error' ? 'error' : item.level === 'warn' ? 'warn' : '') + '">' + esc(item.level) + '</span><span class="component">' + esc(item.component || 'core') + '</span><span>' + esc(item.message) + '<br><span class="component">' + esc(JSON.stringify(item.fields || {})) + '</span></span></div>').join('');
       $('#log-list').scrollTop = $('#log-list').scrollHeight;
+      renderDiagnosticEvents();
     }
 
     ['#log-level', '#log-component', '#log-search'].forEach(id => $(id).addEventListener('input', renderLogs));

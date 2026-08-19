@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -65,6 +67,8 @@ func (a *AdminServer) Handler() http.Handler {
 	mux.Handle("POST /api/config/reveal", a.authenticate(a.csrf(http.HandlerFunc(a.handleReveal))))
 	mux.Handle("PUT /api/account", a.authenticate(a.csrf(http.HandlerFunc(a.handleAccount))))
 	mux.Handle("GET /api/monitor", a.authenticate(http.HandlerFunc(a.handleMonitor)))
+	mux.Handle("GET /api/debug/models", a.authenticate(http.HandlerFunc(a.handleDebugModels)))
+	mux.Handle("POST /api/debug/chat", a.authenticate(a.csrf(http.HandlerFunc(a.handleDebugChat))))
 	mux.Handle("GET /api/logs", a.authenticate(http.HandlerFunc(a.handleLogs)))
 	mux.Handle("GET /api/logs/stream", a.authenticate(http.HandlerFunc(a.handleLogStream)))
 	mux.Handle("/", a.staticHandler())
@@ -387,6 +391,110 @@ func (a *AdminServer) handleAccount(w http.ResponseWriter, r *http.Request) {
 
 func (a *AdminServer) handleMonitor(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": version, "metrics": a.monitor.Snapshot(), "resources": a.manager.Resources()})
+}
+
+func (a *AdminServer) handleDebugModels(w http.ResponseWriter, _ *http.Request) {
+	status, headers, body := a.debugGatewayRequest(http.MethodGet, "/v1/models", nil)
+	if status == 0 {
+		writeAdminError(w, http.StatusBadGateway, "debug_unavailable", "no local server key is configured")
+		return
+	}
+	if status/100 != 2 {
+		writeAdminError(w, http.StatusBadGateway, "debug_models_failed", debugResponseMessage(status, body))
+		return
+	}
+	writeDebugResponse(w, status, headers, body)
+}
+
+func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
+	var input map[string]any
+	if err := decodeAdminJSON(w, r, &input); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	model, ok := input["model"].(string)
+	if !ok || strings.TrimSpace(model) == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_model", "model is required")
+		return
+	}
+	messages, ok := input["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		writeAdminError(w, http.StatusBadRequest, "invalid_messages", "at least one message is required")
+		return
+	}
+	input["model"] = strings.TrimSpace(model)
+	// The first version of the playground is deliberately non-streaming so the
+	// admin endpoint can return a complete, inspectable JSON response.
+	input["stream"] = false
+	body, err := json.Marshal(input)
+	if err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request contains unsupported JSON values")
+		return
+	}
+	status, headers, responseBody := a.debugGatewayRequest(http.MethodPost, "/v1/chat/completions", body)
+	if status == 0 {
+		writeAdminError(w, http.StatusBadGateway, "debug_unavailable", "no local server key is configured")
+		return
+	}
+	if status/100 != 2 {
+		writeAdminError(w, http.StatusBadGateway, "debug_chat_failed", debugResponseMessage(status, responseBody))
+		return
+	}
+	writeDebugResponse(w, status, headers, responseBody)
+}
+
+func (a *AdminServer) debugGatewayRequest(method, path string, body []byte) (int, http.Header, []byte) {
+	cfg := a.manager.Config()
+	if len(cfg.ServerKeys) == 0 {
+		return 0, nil, nil
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+cfg.ServerKeys[0])
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	a.manager.Handler().ServeHTTP(recorder, request)
+	response := recorder.Result()
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
+		return http.StatusBadGateway, response.Header, []byte("failed to read local debug response")
+	}
+	return response.StatusCode, response.Header, responseBody
+}
+
+func writeDebugResponse(w http.ResponseWriter, status int, headers http.Header, body []byte) {
+	if contentType := headers.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	if requestID := headers.Get("X-Request-Id"); requestID != "" {
+		w.Header().Set("X-Request-Id", requestID)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func debugResponseMessage(status int, body []byte) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && strings.TrimSpace(envelope.Error.Message) != "" {
+		return envelope.Error.Message
+	}
+	message := strings.TrimSpace(string(body))
+	if len(message) > 400 {
+		message = message[:400] + "…"
+	}
+	if message == "" {
+		return fmt.Sprintf("local API returned HTTP %d", status)
+	}
+	return fmt.Sprintf("local API returned HTTP %d: %s", status, message)
 }
 
 func (a *AdminServer) handleLogs(w http.ResponseWriter, r *http.Request) {
