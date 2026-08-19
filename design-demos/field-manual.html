@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Field Manual · opencode2api</title>
+  <style>
+    /*
+      方向 B · Field Manual / 运维手册
+      假设：用户会在控制台里停留较久，稳定性、解释性和审计感比「炫」更重要。
+      设计推理：暖白纸张取自技术手册与工程记录，赤陶色只标记可操作信号；
+      通过章节编号、贯穿规则线和正文式说明重排信息，不依赖彩色卡片制造层级。
+      初稿使用 — 和「演示态」文案，不把示例数据冒充真实数据。
+    */
+    :root { color-scheme: light; --paper: #f4f0e7; --paper-2: #ebe5d9; --ink: #1d211f; --muted: #686b63; --faint: #9d9c92; --line: #cfc8ba; --accent: #b65438; --accent-soft: #ead4c8; --teal: #2c6b68; --ok: #397463; --bad: #a5473d; --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif; --display: Georgia, "Noto Serif SC", "Songti SC", serif; --mono: "Cascadia Code", Consolas, monospace; }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.75; }
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .site { min-height: 100vh; }
+    .topline { border-bottom: 1px solid var(--ink); padding: 18px clamp(18px, 4vw, 58px) 13px; display: flex; justify-content: space-between; align-items: center; gap: 24px; font: 11px var(--mono); }
+    .wordmark { font: 700 18px/1 var(--display); letter-spacing: -.04em; }
+    .wordmark span { color: var(--accent); }
+    .top-meta { display: flex; align-items: center; gap: 18px; color: var(--muted); }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+    .prototype { padding: 2px 6px; border: 1px solid var(--line); color: var(--faint); }
+    .nav { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); padding: 0 clamp(18px, 4vw, 58px); overflow-x: auto; }
+    .nav button { min-height: 54px; border: 0; border-right: 1px solid var(--line); background: transparent; padding: 9px 21px 8px 0; margin-right: 21px; color: var(--muted); text-align: left; white-space: nowrap; }
+    .nav button:first-child { padding-left: 0; }
+    .nav button:hover, .nav button.active { color: var(--ink); }
+    .nav button.active { box-shadow: inset 0 -3px var(--accent); }
+    .nav small { display: block; margin-bottom: 2px; color: var(--accent); font: 10px var(--mono); }
+    .content { display: grid; grid-template-columns: minmax(145px, 17vw) minmax(0, 1fr); gap: clamp(24px, 5vw, 76px); width: min(1400px, calc(100% - clamp(36px, 8vw, 116px))); margin: 0 auto; padding: 50px 0 80px; }
+    .index { border-right: 1px solid var(--line); padding-right: 20px; }
+    .index-title { color: var(--accent); font: 11px var(--mono); text-transform: uppercase; letter-spacing: .09em; }
+    .index h2 { margin: 12px 0 22px; font: 500 clamp(26px, 3.4vw, 48px)/1.03 var(--display); letter-spacing: -.045em; }
+    .index p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .index-note { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 10px; color: var(--faint); font: 10px/1.55 var(--mono); }
+    .main { min-width: 0; }
+    .view.hidden { display: none; }
+    .intro { display: flex; justify-content: space-between; gap: 20px; align-items: end; padding-bottom: 32px; border-bottom: 1px solid var(--ink); }
+    .kicker { color: var(--accent); font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { margin-top: 12px; max-width: 760px; font: 500 clamp(42px, 6vw, 82px)/.98 var(--display); letter-spacing: -.06em; text-wrap: balance; }
+    .intro-aside { max-width: 250px; color: var(--muted); font-size: 13px; text-wrap: pretty; }
+    .restart { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 22px 0; padding: 13px 15px; border: 1px solid var(--accent); background: var(--accent-soft); }
+    .restart strong { display: block; font-weight: 700; }
+    .restart small { color: #865243; }
+    .button { min-height: 40px; border: 1px solid var(--ink); background: transparent; padding: 6px 13px; color: var(--ink); }
+    .button:hover { background: var(--ink); color: var(--paper); }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fffaf5; }
+    .button.primary:hover { background: #93452f; }
+    .button.teal { border-color: var(--teal); color: var(--teal); }
+    .button.teal:hover { background: var(--teal); color: #fff; }
+    .label { color: var(--muted); font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .overview-ledger { display: grid; grid-template-columns: 1.25fr .75fr; gap: 0 34px; margin-top: 33px; }
+    .measurements { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
+    .measure { min-height: 123px; padding: 15px 17px 14px 0; border-right: 1px solid var(--line); }
+    .measure + .measure { padding-left: 17px; }
+    .measure:last-child { border-right: 0; }
+    .measure h3 { margin-top: 17px; font: 500 31px/1 var(--display); letter-spacing: -.04em; }
+    .measure h3 small { color: var(--accent); font: 12px var(--mono); }
+    .measure p { margin-top: 8px; color: var(--faint); font: 10px var(--mono); }
+    .ledger-block { margin-top: 31px; border-top: 1px solid var(--ink); padding-top: 12px; }
+    .block-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 14px; }
+    .block-head h2 { font: 500 24px var(--display); letter-spacing: -.03em; }
+    .block-head span { color: var(--faint); font: 10px var(--mono); }
+    .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table th, .table td { padding: 10px 7px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .table th { color: var(--muted); font: 10px var(--mono); text-transform: uppercase; }
+    .table th:last-child, .table td:last-child { text-align: right; }
+    .table tr:hover td { background: #fffaf035; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--accent); }
+    .note { color: var(--muted); font-size: 13px; }
+    .breakdown-list { display: grid; gap: 10px; }
+    .breakdown-row { display: grid; grid-template-columns: 95px minmax(0, 1fr) 35px; gap: 9px; align-items: center; color: var(--muted); font-size: 12px; }
+    .line-bar { height: 4px; background: var(--paper-2); }
+    .line-bar i { display: block; height: 100%; background: var(--accent); }
+    .breakdown-row b { color: var(--ink); font: 11px var(--mono); text-align: right; }
+    .manual-head { padding: 44px 0 25px; border-bottom: 1px solid var(--ink); }
+    .manual-head h1 { font-size: clamp(42px, 5.5vw, 72px); }
+    .manual-head p { max-width: 610px; margin-top: 17px; color: var(--muted); font-size: 16px; text-wrap: pretty; }
+    .form-book { margin-top: 4px; }
+    details.chapter { border-bottom: 1px solid var(--ink); padding: 19px 0 22px; }
+    details.chapter summary { display: flex; justify-content: space-between; gap: 15px; cursor: pointer; list-style: none; }
+    details.chapter summary::-webkit-details-marker { display: none; }
+    .chapter-title { display: flex; gap: 16px; align-items: baseline; }
+    .chapter-no { color: var(--accent); font: 12px var(--mono); }
+    .chapter-title strong { font: 500 25px/1.2 var(--display); }
+    .chapter-title small { display: block; margin-top: 4px; color: var(--muted); font: 12px/1.5 var(--sans); }
+    .chapter-mark { color: var(--accent); font: 23px/1 var(--mono); }
+    details.chapter[open] .chapter-mark::before { content: "−"; }
+    details.chapter:not([open]) .chapter-mark::before { content: "+"; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; margin: 22px 0 2px 42px; }
+    .field { display: grid; gap: 5px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { color: var(--muted); font: 10px var(--mono); }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); background: #fffaf2; color: var(--ink); padding: 10px 11px; border-radius: 0; }
+    textarea { min-height: 75px; resize: vertical; }
+    .check { display: flex; align-items: center; gap: 9px; color: var(--ink); font: 14px var(--sans); }
+    input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+    .secret-strip { display: flex; flex-wrap: wrap; gap: 7px; margin: 4px 0 8px; }
+    .secret { border: 1px solid var(--line); padding: 3px 7px; color: var(--muted); font: 11px var(--mono); }
+    .secret button { border: 0; padding: 0 0 0 6px; background: transparent; color: var(--bad); }
+    .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 23px; }
+    .log-heading { display: flex; justify-content: space-between; gap: 20px; align-items: end; padding: 44px 0 24px; border-bottom: 1px solid var(--ink); }
+    .log-heading h1 { font-size: clamp(42px, 5.5vw, 72px); }
+    .filters { display: grid; grid-template-columns: 135px 150px minmax(180px, 1fr) auto; gap: 8px; margin: 17px 0; }
+    .log-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(210px, .65fr); gap: 24px; }
+    .log-book { border-top: 1px solid var(--ink); }
+    .log-row { display: grid; grid-template-columns: 77px 55px 95px minmax(0, 1fr); gap: 9px; padding: 10px 0; border-bottom: 1px solid var(--line); font: 12px/1.6 var(--mono); }
+    .log-row:hover { background: #fffaf035; }
+    .log-time, .log-module { color: var(--faint); }
+    .log-level { color: var(--ok); }
+    .log-level.warn { color: var(--accent); }
+    .log-level.error { color: var(--bad); }
+    .inspector { border-top: 1px solid var(--ink); padding-top: 12px; }
+    .inspector h2 { font: 500 24px var(--display); }
+    .inspector p { margin-top: 10px; color: var(--muted); font-size: 13px; }
+    .inspector pre { margin: 20px 0 0; padding: 13px; overflow: auto; background: var(--paper-2); color: var(--muted); font: 11px/1.7 var(--mono); }
+    .account { max-width: 680px; }
+    .account .manual-head { margin-bottom: 20px; }
+    .account form { border-top: 1px solid var(--ink); padding-top: 15px; }
+    .account .field + .field { margin-top: 16px; }
+    .account-note { margin: 19px 0; padding: 12px 14px; background: var(--paper-2); color: var(--muted); font-size: 13px; }
+    .toast { position: fixed; right: 24px; bottom: 24px; max-width: min(410px, calc(100vw - 48px)); border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 11px 14px; transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s ease; }
+    .toast.show { transform: none; opacity: 1; }
+    @media (max-width: 880px) { .content { grid-template-columns: 1fr; width: min(100% - 36px, 760px); padding-top: 30px; } .index { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 19px; } .index h2 { margin: 9px 0 7px; } .index-note { display: none; } .overview-ledger { grid-template-columns: 1fr; } }
+    @media (max-width: 620px) { body { font-size: 16px; } .topline { align-items: flex-start; flex-direction: column; gap: 9px; } .top-meta { flex-wrap: wrap; gap: 9px 15px; } .nav { padding: 0 18px; } .nav button { padding-right: 13px; margin-right: 13px; } .content { width: calc(100% - 32px); } .intro, .log-heading { align-items: flex-start; flex-direction: column; } h1 { font-size: clamp(42px, 15vw, 66px); } .measurements { grid-template-columns: 1fr 1fr; } .measure { border-bottom: 1px solid var(--line); } .measure:nth-child(2) { border-right: 0; } .measure:nth-child(3), .measure:nth-child(4) { padding-top: 16px; } .measure:nth-child(3) { padding-left: 0; } .measure:nth-child(4) { border-right: 0; } .fields, .log-layout, .filters { grid-template-columns: 1fr; margin-left: 0; } .log-row { grid-template-columns: 67px 49px 1fr; } .log-row .log-module { display: none; } .restart { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="site">
+    <header class="topline"><div class="wordmark">opencode<span>2api</span> / field manual</div><div class="top-meta"><span class="status">LIVE PREVIEW</span><span class="prototype">VISUAL PROTOTYPE · API NOT CONNECTED</span><span>admin</span><button class="button" data-toast="已退出原型态">退出</button></div></header>
+    <nav class="nav" aria-label="工作区导航"><button class="active" data-view="overview"><small>01</small>运行总览</button><button data-view="config"><small>02</small>配置中心</button><button data-view="logs"><small>03</small>实时日志</button><button data-view="account"><small>04</small>账号安全</button></nav>
+    <div class="content">
+      <aside class="index"><div class="index-title">Control plane</div><h2>把服务读成一本手册。</h2><p>章节化的信息架构让监控、配置和安全操作都有自己的上下文。</p><div class="index-note">FORM FROM CONTENT<br>状态 → 影响 → 操作 → 回执</div></aside>
+      <main class="main">
+        <section class="view" data-page="overview"><div class="intro"><div><div class="kicker">01 / operating record</div><h1>今天的服务，<br>读起来应该很清楚。</h1></div><p class="intro-aside">先看四个运行读数，再顺着 Proxy、Key 池和聚合表定位异常。演示态保留空数据，不伪造统计。</p></div><div class="restart"><div><strong>配置中有字段等待重启</strong><small>监听地址、WebUI 开关等修改已保存，但当前进程仍在使用旧值。</small></div><button class="button" data-toast="已打开 restart_required_fields">查看字段</button></div><div class="overview-ledger"><div class="measurements"><div class="measure"><div class="label">请求总数</div><h3>—</h3><p>LAST HOUR</p></div><div class="measure"><div class="label">成功率</div><h3>— <small>%</small></h3><p>LAST HOUR</p></div><div class="measure"><div class="label">P95 延迟</div><h3>— <small>ms</small></h3><p>LAST HOUR</p></div><div class="measure"><div class="label">活跃 / 流式</div><h3>— <small>/ —</small></h3><p>NOW</p></div></div><div class="ledger-block"><div class="block-head"><h2>Proxy 状态</h2><span>RESOURCES.PROXIES</span></div><table class="table"><thead><tr><th>路由</th><th>状态</th><th>绑定</th></tr></thead><tbody><tr><td>接入后显示 Proxy</td><td class="ok">待同步</td><td>—</td></tr><tr><td>direct</td><td class="warn">待验证</td><td>Z — · G —</td></tr></tbody></table></div><div class="ledger-block"><div class="block-head"><h2>Key 池</h2><span>RESOURCES.KEYS</span></div><table class="table"><thead><tr><th>ID</th><th>Tier</th><th>状态</th></tr></thead><tbody><tr><td>server-••••</td><td>server</td><td class="ok">待同步</td></tr><tr><td>zen-••••</td><td>zen</td><td class="warn">待验证</td></tr></tbody></table></div><div class="ledger-block"><div class="block-head"><h2>聚合索引</h2><span>TOP 10 · EMPTY STATE</span></div><div class="breakdown-list"><div class="breakdown-row"><span>端点</span><div class="line-bar"><i style="width:0"></i></div><b>—</b></div><div class="breakdown-row"><span>状态码</span><div class="line-bar"><i style="width:0"></i></div><b>—</b></div><div class="breakdown-row"><span>模型</span><div class="line-bar"><i style="width:0"></i></div><b>—</b></div><div class="breakdown-row"><span>Tier</span><div class="line-bar"><i style="width:0"></i></div><b>—</b></div></div></div><div class="ledger-block"><div class="block-head"><h2>下一步</h2><span>OPERATOR NOTE</span></div><p class="note">连接服务后，这里可以承接真正的异常建议：查看日志、检查上游、修改配置或确认重启。不增加无依据的「健康分」。</p></div></div></section>
+
+        <section class="view hidden" data-page="config"><div class="manual-head"><div class="kicker">02 / configuration center</div><h1>把配置变成章节，<br>而不是一堵墙。</h1><p>高频项先开，低频项收进章节；每次保存前都能看到风险边界和是否需要重启。</p></div><form class="form-book" onsubmit="return false"><details class="chapter" open><summary><span class="chapter-title"><span class="chapter-no">A</span><span><strong>服务边界</strong><small>API Listen、WebUI、优先 Tier 与会话时间</small></span></span><span class="chapter-mark"></span></summary><div class="fields"><div class="field"><label>API LISTEN</label><input value="0.0.0.0:8080"></div><div class="field"><label>优先 TIER</label><select><option>go</option><option>zen</option></select></div><div class="field"><label>WEBUI LISTEN</label><input value="0.0.0.0:8081"></div><div class="field"><label>SESSION TTL（分钟）</label><input value="120"></div><div class="field full"><label class="check"><input type="checkbox" checked> 启用 WebUI（修改需重启）</label></div></div></details><details class="chapter"><summary><span class="chapter-title"><span class="chapter-no">B</span><span><strong>身份与出口</strong><small>密钥池、匿名模式、Proxy 与 Proxy File</small></span></span><span class="chapter-mark"></span></summary><div class="fields"><div class="field full"><label>SERVER KEYS</label><div class="secret-strip"><span class="secret">••••8d2a <button type="button">×</button></span><span class="secret">••••4f10 <button type="button">×</button></span></div><textarea placeholder="每行新增一个 key"></textarea></div><div class="field"><label>ZEN KEYS</label><textarea placeholder="每行新增一个 key"></textarea></div><div class="field"><label>GO KEYS</label><textarea placeholder="每行新增一个 key"></textarea></div><div class="field full"><label class="check"><input type="checkbox"> 启用 Zen 匿名模式（free 模型优先使用 public）</label></div><div class="field"><label>PROXY</label><textarea placeholder="direct&#10;http://user:pass@host:port"></textarea></div><div class="field"><label>PROXY FILE</label><input value="proxies.txt"></div><div class="field full"><button class="button teal" type="button" data-toast="演示态：将 POST /api/config/reveal">二次验证并查看完整值</button></div></div></details><details class="chapter"><summary><span class="chapter-title"><span class="chapter-no">C</span><span><strong>上游与重试</strong><small>Zen / Go URL、最大尝试次数、超时、模型刷新</small></span></span><span class="chapter-mark"></span></summary><div class="fields"><div class="field"><label>ZEN URL</label><input value="https://api.zen.local"></div><div class="field"><label>GO URL</label><input value="https://api.go.local"></div><div class="field"><label>最大尝试次数</label><input value="3"></div><div class="field"><label>请求超时（秒）</label><input value="60"></div><div class="field full"><label>模型协议覆盖（JSON）</label><textarea>{}</textarea></div></div></details><details class="chapter"><summary><span class="chapter-title"><span class="chapter-no">D</span><span><strong>性能与日志</strong><small>连接池、失败冷却、日志级别和 Ring Size</small></span></span><span class="chapter-mark"></span></summary><div class="fields"><div class="field"><label>MAX IDLE CONNS</label><input value="100"></div><div class="field"><label>MAX IDLE / HOST</label><input value="20"></div><div class="field"><label>FAILURE COOLDOWN（秒）</label><input value="30"></div><div class="field"><label>LOG LEVEL</label><select><option>info</option><option>debug</option><option>warn</option><option>error</option></select></div><div class="field"><label>LOG RING SIZE</label><input value="2000"></div></div></details><div class="form-actions"><button class="button" type="button" data-toast="已从磁盘重载演示配置">从磁盘重载</button><button class="button primary" type="button" data-toast="演示态已验证；生产版将调用 PUT /api/config">验证、保存并立即应用</button></div></form></section>
+
+        <section class="view hidden" data-page="logs"><div class="log-heading"><div><div class="kicker">03 / event stream</div><h1>日志是现场记录，<br>不是黑盒。</h1></div><button class="button" data-pause>暂停流</button></div><div class="filters"><select><option>全部级别</option><option>info</option><option>warn</option><option>error</option></select><input placeholder="模块"><input placeholder="搜索事件、request ID、模型…"><button class="button" data-toast="筛选条件已应用">筛选</button></div><div class="log-layout"><div class="log-book"><div class="log-row"><span class="log-time">—:—:—</span><span class="log-level">info</span><span class="log-module">monitor</span><span>接入后显示实时事件；初稿不使用假 request ID</span></div><div class="log-row"><span class="log-time">—:—:—</span><span class="log-level warn">warn</span><span class="log-module">config</span><span>发生 gap 时，明确告诉用户较早事件已从内存清除</span></div><div class="log-row"><span class="log-time">—:—:—</span><span class="log-level error">error</span><span class="log-module">gateway</span><span>字段详情保留后端原始结构，避免只显示一句泛化错误</span></div></div><aside class="inspector"><h2>事件详情</h2><p>选择一条实时事件后，这里展示 message、component 和 fields。现在是空状态。</p><pre>{
+  "state": "waiting_for_event",
+  "source": "SSE /api/logs/stream"
+}</pre></aside></div></section>
+
+        <section class="view hidden" data-page="account"><div class="account"><div class="manual-head"><div class="kicker">04 / account security</div><h1>账号变更，<br>把后果写在前面。</h1><p>当前密码用于校验，新密码为空则保持不变；成功后会撤销全部已有会话。</p></div><div class="account-note">这是一个会影响当前会话的动作。保存后，生产版会返回 `reauthenticate: true` 并回到登录页。</div><form onsubmit="return false"><div class="field"><label>新账号（留空保持不变）</label><input placeholder="admin"></div><div class="field"><label>当前密码</label><input type="password" placeholder="必填"></div><div class="field"><label>新密码（至少 10 个字符）</label><input type="password" placeholder="留空保持不变"></div><div class="form-actions"><button class="button primary" type="button" data-toast="演示态：将 PUT /api/account 并重新登录">更新并重新登录</button></div></form></div></section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" role="status"></div>
+  <script>
+    const toast = document.querySelector('.toast'); let timer;
+    function showToast(message) { toast.textContent = message; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 2600); }
+    document.querySelectorAll('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-view]').forEach(item => item.classList.toggle('active', item === button)); document.querySelectorAll('[data-page]').forEach(view => view.classList.toggle('hidden', view.dataset.page !== button.dataset.view)); }));
+    const pauseButton = document.querySelector('[data-pause]');
+    if (pauseButton) pauseButton.addEventListener('click', () => { pauseButton.textContent = pauseButton.textContent === '暂停流' ? '继续流' : '暂停流'; showToast(pauseButton.textContent === '继续流' ? '日志流已暂停' : '日志流已继续'); });
+  </script>
+</body>
+</html>

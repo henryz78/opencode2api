@@ -2,71 +2,627 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>opencode2api Control</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>opencode2api · Field Manual</title>
   <style>
-    :root{color-scheme:dark;--bg:#091014;--panel:#111b20;--panel2:#17242a;--line:#263940;--text:#ecf5f2;--muted:#8fa7a2;--accent:#43d6a3;--accent2:#66a8ff;--bad:#ff6b7a;--warn:#f1bd5a;--shadow:0 18px 55px #0006}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% -15%,#164535 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}.login{min-height:100vh;display:grid;place-items:center;padding:24px}.login-card{width:min(420px,100%);background:#101b20ee;border:1px solid var(--line);border-radius:22px;padding:34px;box-shadow:var(--shadow)}.brand{font-size:24px;font-weight:750;letter-spacing:-.5px}.brand span{color:var(--accent)}.sub{color:var(--muted);margin:7px 0 25px}.field{display:grid;gap:7px;margin:13px 0}.field label{color:#b8cac6;font-size:12px;font-weight:650;text-transform:uppercase;letter-spacing:.07em}.input,input,textarea,select{width:100%;background:#0c1519;border:1px solid var(--line);border-radius:9px;color:var(--text);padding:10px 12px;outline:none}.input:focus,input:focus,textarea:focus,select:focus{border-color:var(--accent)}textarea{resize:vertical;min-height:90px}.primary,.ghost,.danger{border:0;border-radius:9px;padding:10px 15px;font-weight:700}.primary{background:var(--accent);color:#062219}.ghost{background:#1a2a30;color:var(--text);border:1px solid var(--line)}.danger{background:#402027;color:#ffb6bd}.wide{width:100%}.error{color:#ff9ca6;min-height:20px}.layout{display:grid;grid-template-columns:240px 1fr;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);padding:25px 18px;background:#0b1418cc;backdrop-filter:blur(12px)}.sidebar .brand{padding:0 8px 24px}.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;color:var(--muted);text-align:left;padding:11px 13px;border-radius:9px}.nav button.active,.nav button:hover{background:#17272c;color:var(--text)}.sidebar-foot{position:absolute;left:18px;right:18px;bottom:20px;color:var(--muted);font-size:12px}.main{min-width:0;padding:28px 34px 60px}.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:25px}.topbar h1{font-size:24px;margin:0}.toolbar{display:flex;gap:9px;align-items:center}.badge{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:99px;background:#153027;color:#8dffcf;font-size:12px}.badge:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}.notice{border:1px solid #725b27;background:#2c2515;color:#f4d691;border-radius:10px;padding:11px 14px;margin-bottom:18px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.section{background:linear-gradient(145deg,#121e23,#0e181c);border:1px solid var(--line);border-radius:13px;box-shadow:0 8px 25px #0002}.card{padding:17px}.card .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.metric{font-size:27px;font-weight:750;margin-top:8px}.metric small{font-size:12px;color:var(--muted);font-weight:500}.section{padding:20px;margin-top:15px}.section h2{font-size:16px;margin:0 0 15px}.split{display:grid;grid-template-columns:1fr 1fr;gap:15px}.table{width:100%;border-collapse:collapse}.table th,.table td{text-align:left;border-bottom:1px solid #203139;padding:9px 7px}.table th{font-size:11px;text-transform:uppercase;color:var(--muted)}.ok{color:var(--accent)}.bad{color:var(--bad)}.warn{color:var(--warn)}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 15px}.form-grid .full{grid-column:1/-1}.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px}.chip{display:flex;gap:8px;align-items:center;background:#1a2a30;border:1px solid var(--line);padding:5px 8px;border-radius:7px;color:#bcd0cb;font-family:ui-monospace,monospace}.chip button{border:0;background:transparent;color:#f8959e;padding:0}.actions{display:flex;gap:9px;justify-content:flex-end;margin-top:18px}.logs{height:58vh;overflow:auto;background:#081014;border:1px solid var(--line);border-radius:10px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}.log{display:grid;grid-template-columns:90px 55px 110px minmax(180px,1fr);gap:10px;padding:7px 10px;border-bottom:1px solid #162329}.log:hover{background:#101d22}.log .time,.log .component{color:var(--muted)}.log .level{font-weight:800}.log .fields{grid-column:4;color:#86a29b;white-space:pre-wrap;overflow-wrap:anywhere}.filters{display:grid;grid-template-columns:150px 170px 1fr auto;gap:9px;margin-bottom:11px}.modal{position:fixed;inset:0;background:#000b;display:grid;place-items:center;padding:20px;z-index:5}.modal-card{width:min(720px,100%);max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:var(--shadow)}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#c8ded8}.toast{position:fixed;right:24px;bottom:24px;background:#183129;border:1px solid #2c5a49;color:#baffdf;padding:11px 15px;border-radius:10px;box-shadow:var(--shadow);z-index:10}@media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}.nav{grid-template-columns:repeat(4,1fr)}.sidebar-foot{display:none}.main{padding:22px 16px}.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.grid,.split,.form-grid{grid-template-columns:1fr}.form-grid .full{grid-column:auto}.filters{grid-template-columns:1fr}.log{grid-template-columns:75px 48px 1fr}.log .component{display:none}.log .fields{grid-column:1/-1}.nav button{text-align:center;padding:8px 3px}.topbar{align-items:flex-start;gap:12px;flex-direction:column}}
+    /*
+      Field Manual production pass
+      - 视觉母题来自运维手册：章节编号、贯穿规则线、纸张底色、赤陶色信号。
+      - 监控首屏回答「现在是否健康」，配置按影响范围分组，日志保留实时事件语义。
+      - 不使用装饰性图标、彩虹渐变或假统计；所有数字、资源和事件仍来自现有 API。
+      - 旧版入口已保存为 webui/index.v1.html，便于回看和回滚。
+    */
+    :root {
+      color-scheme: light;
+      --paper: #f4f0e7;
+      --paper-deep: #e9e2d5;
+      --paper-soft: #fbf8f1;
+      --ink: #1d211f;
+      --muted: #676b64;
+      --faint: #92958c;
+      --line: #cbc4b7;
+      --line-strong: #9c968b;
+      --accent: #b65438;
+      --accent-dark: #87432f;
+      --accent-soft: #ecd6ca;
+      --teal: #2d6c67;
+      --teal-soft: #d6e2dd;
+      --ok: #397563;
+      --warn: #a6632e;
+      --bad: #9b4039;
+      --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --display: Georgia, "Noto Serif SC", "Songti SC", serif;
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.72; }
+    body, button, input, textarea, select { font-synthesis: none; }
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3 { text-wrap: balance; }
+    p { text-wrap: pretty; }
+    code, pre, .data, table { font-variant-numeric: tabular-nums; }
+    code, pre { font-family: var(--mono); }
+    .hidden { display: none !important; }
+
+    /* Login */
+    .login-screen { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; padding: 22px clamp(18px, 5vw, 68px) 42px; }
+    .login-top { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 1px solid var(--ink); padding-bottom: 14px; font: 11px var(--mono); }
+    .wordmark { font: 700 18px/1 var(--display); letter-spacing: -.05em; }
+    .wordmark span { color: var(--accent); }
+    .login-top-note { color: var(--muted); }
+    .login-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 440px); gap: clamp(35px, 10vw, 150px); align-items: center; width: min(1180px, 100%); margin: 0 auto; }
+    .login-kicker, .eyebrow, .field label, .label, .nav-index, .context-kicker { color: var(--accent); font: 10px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .login-intro h1 { margin-top: 15px; max-width: 680px; font: 500 clamp(47px, 8vw, 112px)/.95 var(--display); letter-spacing: -.07em; }
+    .login-intro p { max-width: 530px; margin-top: 25px; color: var(--muted); font-size: 16px; }
+    .login-list { display: grid; gap: 9px; max-width: 420px; margin-top: 31px; border-top: 1px solid var(--line); padding-top: 14px; }
+    .login-list div { display: grid; grid-template-columns: 30px 1fr; gap: 10px; color: var(--muted); font-size: 13px; }
+    .login-list b { color: var(--accent); font: 11px var(--mono); }
+    .login-form { border-top: 1px solid var(--ink); padding-top: 15px; }
+    .login-form h2 { font: 500 30px/1.15 var(--display); }
+    .login-form .sub { margin: 6px 0 22px; color: var(--muted); font-size: 13px; }
+    .field { display: grid; gap: 6px; }
+    .field + .field { margin-top: 16px; }
+    .field label { color: var(--muted); }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 0; background: var(--paper-soft); color: var(--ink); padding: 10px 11px; outline: 0; }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+    textarea { min-height: 90px; resize: vertical; }
+    input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+    .error { min-height: 26px; padding-top: 10px; color: var(--bad); font-size: 13px; }
+
+    /* Shared shell */
+    .app-shell { min-height: 100vh; }
+    .site-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 1px solid var(--ink); padding: 17px clamp(18px, 4vw, 58px) 13px; }
+    .header-meta, .header-actions, .inline, .actions { display: flex; align-items: center; gap: 14px; }
+    .header-meta { color: var(--muted); font: 11px var(--mono); }
+    .status-live { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); }
+    .status-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .version { color: var(--faint); }
+    .prototype-badge { border: 1px solid var(--line); padding: 2px 6px; color: var(--faint); font: 10px var(--mono); }
+    .workspace-nav { display: flex; gap: 0; border-bottom: 1px solid var(--line); padding: 0 clamp(18px, 4vw, 58px); overflow-x: auto; }
+    .workspace-nav button { display: grid; gap: 1px; min-width: 120px; min-height: 57px; border: 0; border-right: 1px solid var(--line); background: transparent; padding: 9px 21px 8px 0; margin-right: 21px; color: var(--muted); text-align: left; white-space: nowrap; }
+    .workspace-nav button:hover, .workspace-nav button.active { color: var(--ink); }
+    .workspace-nav button.active { box-shadow: inset 0 -3px var(--accent); }
+    .workspace-nav .nav-index { color: var(--accent); }
+    .content-shell { display: grid; grid-template-columns: minmax(160px, 17vw) minmax(0, 1fr); gap: clamp(28px, 5vw, 78px); width: min(1420px, calc(100% - clamp(36px, 8vw, 116px))); margin: 0 auto; padding: 44px 0 86px; }
+    .context-rail { border-right: 1px solid var(--line); padding-right: 22px; }
+    .context-kicker { display: block; }
+    .context-rail h1 { margin: 13px 0 17px; font: 500 clamp(29px, 3.3vw, 52px)/1.02 var(--display); letter-spacing: -.055em; }
+    .context-rail p { color: var(--muted); font-size: 13px; }
+    .context-note { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--faint); font: 10px/1.65 var(--mono); }
+    .main { min-width: 0; }
+    .page-heading { display: flex; justify-content: space-between; gap: 24px; align-items: end; border-bottom: 1px solid var(--ink); padding-bottom: 26px; }
+    .page-heading h2 { margin-top: 11px; font: 500 clamp(40px, 5.5vw, 78px)/.98 var(--display); letter-spacing: -.065em; }
+    .page-heading p { max-width: 300px; color: var(--muted); font-size: 13px; }
+    .page.hidden { display: none; }
+    .button { min-height: 40px; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink); padding: 6px 13px; }
+    .button:hover { background: var(--ink); color: var(--paper); }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fffaf5; font-weight: 700; }
+    .button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+    .button.teal { border-color: var(--teal); color: var(--teal); }
+    .button.teal:hover { background: var(--teal); color: #fff; }
+    .button.danger { border-color: var(--bad); color: var(--bad); }
+    .button.danger:hover { background: var(--bad); color: #fff; }
+    .restart { display: flex; justify-content: space-between; gap: 17px; align-items: center; margin: 22px 0; border: 1px solid var(--accent); background: var(--accent-soft); padding: 13px 15px; }
+    .restart strong { display: block; color: var(--accent-dark); font-weight: 700; }
+    .restart small { color: #875245; }
+
+    /* Overview */
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 32px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
+    .metric { min-height: 126px; padding: 15px 18px 14px 0; border-right: 1px solid var(--line); }
+    .metric + .metric { padding-left: 18px; }
+    .metric:last-child { border-right: 0; }
+    .metric-value { margin-top: 16px; font: 500 33px/1 var(--display); letter-spacing: -.05em; }
+    .metric-value small { color: var(--accent); font: 12px var(--mono); }
+    .metric-note { margin-top: 9px; color: var(--faint); font: 10px var(--mono); }
+    .section-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 0 34px; }
+    .ledger { margin-top: 31px; border-top: 1px solid var(--ink); padding-top: 12px; }
+    .ledger-head { display: flex; justify-content: space-between; gap: 15px; align-items: baseline; margin-bottom: 13px; }
+    .ledger-head h3 { font: 500 25px/1.2 var(--display); letter-spacing: -.035em; }
+    .ledger-head span { color: var(--faint); font: 10px var(--mono); }
+    .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table th, .table td { padding: 10px 7px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .table th { color: var(--muted); font: 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+    .table th:last-child, .table td:last-child { text-align: right; }
+    .table tr:hover td { background: #fffaf038; }
+    .state { display: inline-flex; align-items: center; gap: 7px; }
+    .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .state.ok { color: var(--ok); }
+    .state.warn { color: var(--warn); }
+    .state.bad { color: var(--bad); }
+    .breakdowns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 17px; }
+    .breakdowns > div { min-width: 0; border-top: 1px solid var(--line); padding-top: 10px; }
+    .breakdowns h3 { margin-bottom: 5px; color: var(--muted); font: 10px var(--mono); text-transform: uppercase; }
+    .breakdowns .table { font-size: 12px; }
+    .breakdowns .table th { display: none; }
+    .empty { padding: 14px 0; color: var(--faint); font: 12px var(--mono); }
+
+    /* Config */
+    .manual-section { border-bottom: 1px solid var(--ink); padding: 20px 0 24px; }
+    .manual-section summary { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; cursor: pointer; list-style: none; }
+    .manual-section summary::-webkit-details-marker { display: none; }
+    .manual-section summary::after { content: "+"; color: var(--accent); font: 21px/1 var(--mono); }
+    .manual-section[open] summary::after { content: "−"; }
+    .manual-section summary strong { font: 500 25px/1.25 var(--display); letter-spacing: -.03em; }
+    .manual-section summary small { display: block; margin-top: 4px; color: var(--muted); font: 12px/1.6 var(--sans); }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 24px; margin-top: 22px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    .check { display: flex; align-items: center; gap: 9px; color: var(--ink); font-size: 14px; }
+    .check input { margin: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; }
+    .chip { border: 1px solid var(--line); padding: 3px 8px; color: var(--muted); font: 11px var(--mono); }
+    .chip button { border: 0; background: transparent; color: var(--bad); padding: 0 0 0 6px; }
+    .config-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
+    .form-hint { margin-top: 6px; color: var(--faint); font-size: 12px; }
+
+    /* Logs */
+    .log-tools { display: grid; grid-template-columns: 140px 160px minmax(170px, 1fr) auto; gap: 8px; margin: 17px 0; }
+    .logs { border-top: 1px solid var(--ink); background: var(--paper-soft); font: 12px/1.65 var(--mono); }
+    .log { display: grid; grid-template-columns: 80px 52px 100px minmax(0, 1fr); gap: 9px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .log:hover { background: #fffaf052; }
+    .log .time, .log .component { color: var(--faint); }
+    .log .level { color: var(--ok); font-weight: 700; }
+    .log .level.warn { color: var(--warn); }
+    .log .level.error { color: var(--bad); }
+    .logs-empty { border-bottom: 1px solid var(--line); padding: 20px 0; color: var(--faint); }
+    .log-status { color: var(--muted); font: 11px var(--mono); }
+
+    /* Account and modal */
+    .account-card { max-width: 680px; margin-top: 30px; border-top: 1px solid var(--ink); padding-top: 15px; }
+    .account-card h3 { font: 500 27px var(--display); }
+    .account-card > p { margin: 8px 0 21px; color: var(--muted); font-size: 13px; }
+    .account-note { margin-bottom: 19px; border: 1px solid var(--line); background: var(--paper-deep); padding: 12px 14px; color: var(--muted); font-size: 13px; }
+    .account-actions { display: flex; justify-content: flex-end; margin-top: 23px; }
+    .modal { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 22px; background: #1d211fcc; }
+    .modal-card { width: min(760px, 100%); max-height: 82vh; overflow: auto; border: 1px solid var(--ink); background: var(--paper); padding: 21px; box-shadow: 0 25px 70px #0004; }
+    .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--ink); padding-bottom: 13px; }
+    .modal-head h2 { font: 500 28px var(--display); }
+    .modal-card pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 17px 0 0; border: 1px solid var(--line); background: var(--paper-soft); padding: 15px; color: var(--muted); font: 12px/1.7 var(--mono); }
+    .toast { position: fixed; z-index: 12; right: 24px; bottom: 24px; max-width: min(460px, calc(100vw - 48px)); border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 11px 15px; transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s ease; }
+    .toast.show { transform: none; opacity: 1; }
+    .toast.bad { border-color: var(--bad); background: var(--bad); color: #fff; }
+
+    @media (max-width: 900px) {
+      .login-body, .section-grid { grid-template-columns: 1fr; }
+      .login-body { gap: 50px; padding: 45px 0 30px; }
+      .login-intro h1 { font-size: clamp(48px, 12vw, 90px); }
+      .content-shell { grid-template-columns: 1fr; width: min(760px, calc(100% - 36px)); padding-top: 29px; }
+      .context-rail { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 19px; }
+      .context-rail h1 { margin: 8px 0 6px; }
+      .context-note { display: none; }
+    }
+    @media (max-width: 640px) {
+      body { font-size: 16px; }
+      .login-screen { padding: 18px 16px 30px; }
+      .login-top, .site-header { align-items: flex-start; flex-direction: column; gap: 11px; }
+      .header-meta { flex-wrap: wrap; gap: 8px 14px; }
+      .workspace-nav { padding: 0 16px; }
+      .workspace-nav button { min-width: 92px; padding-right: 12px; margin-right: 12px; }
+      .content-shell { width: calc(100% - 32px); padding-bottom: 52px; }
+      .page-heading { align-items: flex-start; flex-direction: column; gap: 14px; }
+      .page-heading h2 { font-size: clamp(42px, 14vw, 67px); }
+      .restart { align-items: flex-start; flex-direction: column; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+      .metric { min-height: 110px; border-bottom: 1px solid var(--line); }
+      .metric:nth-child(2) { border-right: 0; }
+      .metric:nth-child(3) { padding-left: 0; }
+      .metric:nth-child(4) { border-right: 0; }
+      .metric:nth-child(3), .metric:nth-child(4) { border-bottom: 0; padding-top: 16px; }
+      .breakdowns { grid-template-columns: 1fr 1fr; }
+      .form-grid, .log-tools { grid-template-columns: 1fr; }
+      .form-grid .full { grid-column: auto; }
+      .config-actions { align-items: stretch; flex-direction: column; }
+      .log { grid-template-columns: 68px 48px minmax(0, 1fr); }
+      .log .component { display: none; }
+      .account-actions { align-items: stretch; flex-direction: column; }
+    }
   </style>
 </head>
 <body>
-  <section id="login" class="login">
-    <form id="login-form" class="login-card">
-      <div class="brand">opencode<span>2api</span></div><div class="sub">Control plane · 管理登录</div>
-      <div class="field"><label>账号</label><input id="login-user" autocomplete="username" required></div>
-      <div class="field"><label>密码</label><input id="login-pass" type="password" autocomplete="current-password" required></div>
-      <div id="login-error" class="error"></div><button class="primary wide">登录控制台</button>
-    </form>
+  <section id="login" class="login-screen">
+    <div class="login-top"><div class="wordmark">opencode<span>2api</span> / field manual</div><div class="login-top-note">管理入口 · 安全会话</div></div>
+    <div class="login-body">
+      <div class="login-intro">
+        <div class="login-kicker">control plane / sign in</div>
+        <h1>先确认身份，<br>再读服务。</h1>
+        <p>这是一个面向运维现场的控制台。登录后，你可以读取运行状态、调整配置、查看实时事件，并在敏感操作前再次确认。</p>
+        <div class="login-list"><div><b>01</b><span>默认脱敏的 Key 与 Proxy</span></div><div><b>02</b><span>写操作保留 CSRF 与会话保护</span></div><div><b>03</b><span>账号更新会撤销已有登录</span></div></div>
+      </div>
+      <form id="login-form" class="login-form">
+        <h2>登录控制台</h2>
+        <p class="sub">使用 WebUI 管理员账号继续</p>
+        <div class="field"><label for="login-user">账号</label><input id="login-user" autocomplete="username" required></div>
+        <div class="field"><label for="login-pass">密码</label><input id="login-pass" type="password" autocomplete="current-password" required></div>
+        <div id="login-error" class="error" role="alert"></div>
+        <button class="button primary" style="width:100%" type="submit">登录控制台</button>
+      </form>
+    </div>
   </section>
-  <div id="app" class="layout hidden">
-    <aside class="sidebar"><div class="brand">opencode<span>2api</span></div><nav class="nav">
-      <button data-page="overview" class="active">总览</button><button data-page="config">配置</button><button data-page="logs">实时日志</button><button data-page="account">账号</button>
-    </nav><div class="sidebar-foot"><div id="version">version —</div></div></aside>
-    <main class="main">
-	  <header class="topbar"><div><h1 id="page-title">运行总览</h1><div class="sub" id="page-sub">最近一小时的服务状态</div></div><div class="toolbar"><span class="badge">Live</span><button id="logout" class="ghost">退出登录</button></div></header>
-	  <div id="restart-notice" class="notice hidden"></div>
-      <section id="page-overview" class="page">
-		<div class="grid"><div class="card"><div class="label">请求总数</div><div id="m-total" class="metric">—</div></div><div class="card"><div class="label">成功率</div><div id="m-rate" class="metric">—</div></div><div class="card"><div class="label">P95 延迟</div><div id="m-p95" class="metric">—</div></div><div class="card"><div class="label">活跃 / 流式</div><div id="m-active" class="metric">—</div></div></div>
-		<div class="split"><div class="section"><h2>Proxy 状态</h2><table class="table"><thead><tr><th>路由</th><th>状态</th><th>绑定</th></tr></thead><tbody id="proxy-table"></tbody></table></div><div class="section"><h2>Key 池</h2><table class="table"><thead><tr><th>ID</th><th>Tier</th><th>状态</th></tr></thead><tbody id="key-table"></tbody></table></div></div>
-		<div class="section"><h2>最近一小时聚合</h2><div id="breakdowns" class="split"></div></div>
-      </section>
-      <section id="page-config" class="page hidden">
-        <form id="config-form">
-		  <div class="section"><h2>服务与管理端</h2><div class="form-grid"><div class="field"><label>API Listen</label><input id="c-listen"></div><div class="field"><label>优先 Tier</label><select id="c-prefer"><option value="go">Go</option><option value="zen">Zen</option></select></div><div class="field"><label>WebUI Listen</label><input id="c-web-listen"></div><div class="field"><label>Session TTL（分钟）</label><input id="c-session" type="number"></div><div class="field"><label><input id="c-web-enabled" type="checkbox" style="width:auto"> 启用 WebUI（修改需重启）</label></div></div></div>
-		  <div class="section"><h2>密钥池</h2><div class="form-grid"><div class="field full"><label><input id="c-anonymous" type="checkbox" style="width:auto"> 启用 Zen 匿名模式（free 模型优先使用 public）</label></div><div class="field full"><label>Server Keys</label><div id="server_keys-chips" class="chips"></div><textarea id="server_keys-new" placeholder="每行新增一个 key"></textarea></div><div class="field"><label>Zen Keys</label><div id="zen_keys-chips" class="chips"></div><textarea id="zen_keys-new" placeholder="每行新增一个 key"></textarea></div><div class="field"><label>Go Keys</label><div id="go_keys-chips" class="chips"></div><textarea id="go_keys-new" placeholder="每行新增一个 key"></textarea></div></div><button id="reveal" type="button" class="ghost">二次验证并查看完整值</button></div>
-		  <div class="section"><h2>Proxy</h2><div id="proxies-chips" class="chips"></div><div class="form-grid"><div class="field"><label>新增 Proxy（每行一个）</label><textarea id="proxies-new" placeholder="direct\nhttp://user:pass@host:port"></textarea></div><div class="field"><label>Proxy File</label><input id="c-proxyfile" placeholder="proxies.txt"></div></div></div>
-		  <div class="section"><h2>上游与重试</h2><div class="form-grid"><div class="field"><label>Zen URL</label><input id="c-up-zen"></div><div class="field"><label>Go URL</label><input id="c-up-go"></div><div class="field"><label>最大尝试次数</label><input id="c-attempts" type="number"></div><div class="field"><label>请求超时（秒）</label><input id="c-timeout" type="number"></div><div class="field"><label>模型刷新（秒）</label><input id="c-refresh" type="number"></div><div class="field"><label>模型协议覆盖（JSON）</label><textarea id="c-protocols" spellcheck="false">{}</textarea></div></div></div>
-		  <div class="section"><h2>性能与日志</h2><div class="form-grid"><div class="field"><label>Max Idle Conns</label><input id="c-idle" type="number"></div><div class="field"><label>Max Idle / Host</label><input id="c-idle-host" type="number"></div><div class="field"><label>Max Conns / Host（0 无限制）</label><input id="c-max-host" type="number"></div><div class="field"><label>Idle Timeout（秒）</label><input id="c-idle-timeout" type="number"></div><div class="field"><label>Connect Timeout（秒）</label><input id="c-connect" type="number"></div><div class="field"><label>Failure Cooldown（秒）</label><input id="c-cooldown" type="number"></div><div class="field"><label>日志级别</label><select id="c-level"><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div><div class="field"><label>日志 Ring Size</label><input id="c-ring" type="number"></div></div><div class="actions"><button id="reload-config" type="button" class="ghost">从磁盘重载</button><button class="primary">验证、保存并立即应用</button></div></div>
-        </form>
-      </section>
-	  <section id="page-logs" class="page hidden"><div class="filters"><select id="log-level"><option value="">全部级别</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select><input id="log-component" placeholder="模块"><input id="log-search" placeholder="搜索事件、request ID、模型…"><button id="log-pause" class="ghost">暂停</button></div><div id="log-list" class="logs"></div></section>
-	  <section id="page-account" class="page hidden"><form id="account-form" class="section" style="max-width:620px"><h2>更新管理账号</h2><div class="field"><label>新账号（留空保持不变）</label><input id="a-user"></div><div class="field"><label>当前密码</label><input id="a-current" type="password" required></div><div class="field"><label>新密码（留空保持不变，至少 10 个字符）</label><input id="a-new" type="password"></div><div class="actions"><button class="primary">更新并重新登录</button></div></form></section>
-    </main>
+
+  <div id="app" class="app-shell hidden">
+    <header class="site-header">
+      <div class="wordmark">opencode<span>2api</span> / field manual</div>
+      <div class="header-actions">
+        <div class="header-meta"><span class="status-live">LIVE</span><span class="prototype-badge">CONTROL PLANE</span><span id="version" class="version">version —</span></div>
+        <span class="header-meta">管理员 · admin</span>
+        <button id="logout" class="button" type="button">退出登录</button>
+      </div>
+    </header>
+    <nav class="workspace-nav" aria-label="工作区导航">
+      <button type="button" data-page="overview" class="active"><span class="nav-index">01</span><span>运行总览</span></button>
+      <button type="button" data-page="config"><span class="nav-index">02</span><span>配置中心</span></button>
+      <button type="button" data-page="logs"><span class="nav-index">03</span><span>实时日志</span></button>
+      <button type="button" data-page="account"><span class="nav-index">04</span><span>账号安全</span></button>
+    </nav>
+    <div class="content-shell">
+      <aside class="context-rail">
+        <span id="rail-index" class="context-kicker">01 / operating record</span>
+        <h1 id="rail-page-title">运行总览</h1>
+        <p id="rail-page-sub">最近一小时的服务状态</p>
+        <div class="context-note">FORM FROM CONTENT<br>状态 → 影响 → 操作 → 回执<br><br>数据源：monitor + SSE</div>
+      </aside>
+      <main class="main">
+        <div class="page-heading"><div><div id="page-index" class="eyebrow">01 / operating record</div><h2 id="page-title">运行总览</h2></div><p id="page-sub">最近一小时的服务状态</p></div>
+        <div id="restart-notice" class="restart hidden" role="status"></div>
+
+        <section id="page-overview" class="page">
+          <div class="metrics">
+            <div class="metric"><div class="label">请求总数</div><div id="m-total" class="metric-value">—</div><div class="metric-note">最近一小时</div></div>
+            <div class="metric"><div class="label">成功率</div><div id="m-rate" class="metric-value">—</div><div class="metric-note">按小时聚合</div></div>
+            <div class="metric"><div class="label">P95 延迟</div><div id="m-p95" class="metric-value">—</div><div class="metric-note">上游等待包含在内</div></div>
+            <div class="metric"><div class="label">活跃 / 流式</div><div id="m-active" class="metric-value">—</div><div class="metric-note">当前连接</div></div>
+          </div>
+          <div class="section-grid">
+            <section class="ledger"><div class="ledger-head"><h3>Proxy 状态</h3><span>RESOURCES.PROXIES</span></div><table class="table"><thead><tr><th>路由</th><th>状态</th><th>绑定</th></tr></thead><tbody id="proxy-table"><tr><td colspan="3" class="empty">等待监控数据</td></tr></tbody></table></section>
+            <section class="ledger"><div class="ledger-head"><h3>Key 池</h3><span>RESOURCES.KEYS</span></div><table class="table"><thead><tr><th>ID</th><th>Tier</th><th>状态</th></tr></thead><tbody id="key-table"><tr><td colspan="3" class="empty">等待监控数据</td></tr></tbody></table></section>
+          </div>
+          <section class="ledger"><div class="ledger-head"><h3>最近一小时聚合</h3><span>TOP 10 · ENDPOINT / STATUS / MODEL / TIER</span></div><div id="breakdowns" class="breakdowns"><div><h3>端点</h3><div class="empty">等待监控数据</div></div><div><h3>状态码</h3><div class="empty">等待监控数据</div></div><div><h3>模型</h3><div class="empty">等待监控数据</div></div><div><h3>Tier</h3><div class="empty">等待监控数据</div></div></div></section>
+        </section>
+
+        <section id="page-config" class="page hidden">
+          <form id="config-form">
+            <details class="manual-section" open><summary><span><strong>服务边界</strong><small>API Listen、WebUI、优先 Tier 与会话时间</small></span></summary><div class="form-grid"><div class="field"><label for="c-listen">API LISTEN</label><input id="c-listen"></div><div class="field"><label for="c-prefer">优先 TIER</label><select id="c-prefer"><option value="go">Go</option><option value="zen">Zen</option></select></div><div class="field"><label for="c-web-listen">WEBUI LISTEN</label><input id="c-web-listen"></div><div class="field"><label for="c-session">SESSION TTL（分钟）</label><input id="c-session" type="number"></div><div class="field full"><label class="check"><input id="c-web-enabled" type="checkbox">启用 WebUI（修改需重启）</label></div></div></details>
+            <details class="manual-section"><summary><span><strong>身份与出口</strong><small>密钥池、匿名模式、Proxy 与 Proxy File；默认脱敏</small></span></summary><div class="form-grid"><div class="field full"><label>SERVER KEYS</label><div id="server_keys-chips" class="chips"></div><textarea id="server_keys-new" placeholder="每行新增一个 key"></textarea></div><div class="field"><label>ZEN KEYS</label><div id="zen_keys-chips" class="chips"></div><textarea id="zen_keys-new" placeholder="每行新增一个 key"></textarea></div><div class="field"><label>GO KEYS</label><div id="go_keys-chips" class="chips"></div><textarea id="go_keys-new" placeholder="每行新增一个 key"></textarea></div><div class="field full"><label class="check"><input id="c-anonymous" type="checkbox">启用 Zen 匿名模式（free 模型优先使用 public）</label></div><div class="field"><label>PROXY</label><div id="proxies-chips" class="chips"></div><textarea id="proxies-new" placeholder="direct&#10;http://user:pass@host:port"></textarea></div><div class="field"><label for="c-proxyfile">PROXY FILE</label><input id="c-proxyfile" placeholder="proxies.txt"></div><div class="field full"><button id="reveal" class="button teal" type="button">二次验证并查看完整值</button><p class="form-hint">完整值仅在本次确认后显示，并通过受保护的 API 返回。</p></div></div></details>
+            <details class="manual-section"><summary><span><strong>上游与重试</strong><small>Zen / Go URL、最大尝试次数、超时、模型刷新与协议覆盖</small></span></summary><div class="form-grid"><div class="field"><label for="c-up-zen">ZEN URL</label><input id="c-up-zen"></div><div class="field"><label for="c-up-go">GO URL</label><input id="c-up-go"></div><div class="field"><label for="c-attempts">最大尝试次数</label><input id="c-attempts" type="number"></div><div class="field"><label for="c-timeout">请求超时（秒）</label><input id="c-timeout" type="number"></div><div class="field"><label for="c-refresh">模型刷新（秒）</label><input id="c-refresh" type="number"></div><div class="field full"><label for="c-protocols">模型协议覆盖（JSON）</label><textarea id="c-protocols" spellcheck="false">{}</textarea></div></div></details>
+            <details class="manual-section"><summary><span><strong>性能与日志</strong><small>连接池、超时、失败冷却、日志级别和 Ring Size</small></span></summary><div class="form-grid"><div class="field"><label for="c-idle">MAX IDLE CONNS</label><input id="c-idle" type="number"></div><div class="field"><label for="c-idle-host">MAX IDLE / HOST</label><input id="c-idle-host" type="number"></div><div class="field"><label for="c-max-host">MAX CONNS / HOST（0 无限制）</label><input id="c-max-host" type="number"></div><div class="field"><label for="c-idle-timeout">IDLE TIMEOUT（秒）</label><input id="c-idle-timeout" type="number"></div><div class="field"><label for="c-connect">CONNECT TIMEOUT（秒）</label><input id="c-connect" type="number"></div><div class="field"><label for="c-cooldown">FAILURE COOLDOWN（秒）</label><input id="c-cooldown" type="number"></div><div class="field"><label for="c-level">日志级别</label><select id="c-level"><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div><div class="field"><label for="c-ring">LOG RING SIZE</label><input id="c-ring" type="number"></div></div></details>
+            <div class="config-actions"><button id="reload-config" class="button" type="button">从磁盘重载</button><button class="button primary" type="submit">验证、保存并立即应用</button></div>
+          </form>
+        </section>
+
+        <section id="page-logs" class="page hidden">
+          <div class="inline" style="justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:12px"><span class="log-status">SSE /api/logs/stream</span><button id="log-pause" class="button" type="button">暂停流</button></div>
+          <div class="log-tools"><select id="log-level"><option value="">全部级别</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select><input id="log-component" placeholder="模块"><input id="log-search" placeholder="搜索事件、request ID、模型…"><span class="log-status" style="align-self:center">最新 500 条</span></div>
+          <div id="log-list" class="logs" aria-live="polite"><div class="logs-empty">正在等待实时事件……</div></div>
+        </section>
+
+        <section id="page-account" class="page hidden">
+          <div class="account-card"><h3>更新管理账号</h3><p>留空的字段保持不变。更新成功后，所有登录会话会被撤销，需要重新登录。</p><div class="account-note">影响说明：当前密码校验 → 更新账号 → 现有 session 失效 → 回到登录页。</div><form id="account-form"><div class="field"><label for="a-user">新账号（留空保持不变）</label><input id="a-user" autocomplete="username"></div><div class="field"><label for="a-current">当前密码</label><input id="a-current" type="password" autocomplete="current-password" required></div><div class="field"><label for="a-new">新密码（留空保持不变，至少 10 个字符）</label><input id="a-new" type="password" autocomplete="new-password"></div><div class="account-actions"><button class="button primary" type="submit">更新并重新登录</button></div></form></div>
+        </section>
+      </main>
+    </div>
   </div>
-	<div id="modal" class="modal hidden"><div class="modal-card"><div class="topbar"><h2>敏感配置</h2><button id="modal-close" class="ghost">关闭</button></div><pre id="modal-content"></pre></div></div><div id="toast" class="toast hidden"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-card"><div class="modal-head"><h2 id="modal-title">敏感配置</h2><button id="modal-close" class="button" type="button">关闭</button></div><pre id="modal-content"></pre></div></div>
+  <div id="toast" class="toast" role="status"></div>
+
   <script>
-	const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)]; let csrf='',config=null,logEvents=[],eventSource=null,paused=false,monitorTimer=null,logRenderPending=false;
-  async function api(path,options={}){options.headers={...(options.headers||{}),'Accept':'application/json'};if(options.body){options.headers['Content-Type']='application/json'}if(csrf&&!['GET','HEAD'].includes(options.method||'GET'))options.headers['X-CSRF-Token']=csrf;const response=await fetch(path,options);if(response.status===401){showLogin();throw new Error('登录已失效')}if(response.status===204)return null;const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error?.message||`HTTP ${response.status}`);return data}
-  function toast(message,bad=false){const el=$('#toast');el.textContent=message;el.style.background=bad?'#402027':'#183129';el.classList.remove('hidden');setTimeout(()=>el.classList.add('hidden'),3500)}
-  function showLogin(){csrf='';$('#app').classList.add('hidden');$('#login').classList.remove('hidden');if(eventSource)eventSource.close();clearInterval(monitorTimer)}
-  async function boot(){try{const s=await api('/api/auth/session');csrf=s.csrf_token;$('#login').classList.add('hidden');$('#app').classList.remove('hidden');await loadConfig();await refreshMonitor();monitorTimer=setInterval(refreshMonitor,3000);connectLogs()}catch(e){showLogin()}}
-  $('#login-form').addEventListener('submit',async e=>{e.preventDefault();$('#login-error').textContent='';try{const s=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#login-user').value,password:$('#login-pass').value})});csrf=s.csrf_token;$('#login-pass').value='';$('#login').classList.add('hidden');$('#app').classList.remove('hidden');await loadConfig();await refreshMonitor();monitorTimer=setInterval(refreshMonitor,3000);connectLogs()}catch(err){$('#login-error').textContent=err.message}});
-  $('#logout').onclick=async()=>{try{await api('/api/auth/logout',{method:'POST'})}finally{showLogin()}};
-	const titles={overview:['运行总览','最近一小时的服务状态'],config:['配置中心','验证后原子保存并立即应用'],logs:['实时日志','结构化事件流'],account:['账号安全','修改后会撤销所有登录会话']};
-  $$('.nav button').forEach(b=>b.onclick=()=>{$$('.nav button').forEach(x=>x.classList.toggle('active',x===b));$$('.page').forEach(x=>x.classList.add('hidden'));$(`#page-${b.dataset.page}`).classList.remove('hidden');$('#page-title').textContent=titles[b.dataset.page][0];$('#page-sub').textContent=titles[b.dataset.page][1]});
-  async function loadConfig(){config=await api('/api/config');fillConfig(config)}
-  function fillConfig(c){$('#c-listen').value=c.listen;$('#c-prefer').value=c.prefer;$('#c-web-listen').value=c.webui.listen;$('#c-session').value=c.webui.session_ttl_minutes;$('#c-web-enabled').checked=c.webui.enabled;$('#c-anonymous').checked=!!c.anonymous;$('#c-proxyfile').value=c.proxyfile;$('#c-up-zen').value=c.upstream.zen;$('#c-up-go').value=c.upstream.go;$('#c-attempts').value=c.retry.max_attempts;$('#c-timeout').value=c.retry.timeout_seconds;$('#c-refresh').value=c.models.refresh_seconds;$('#c-protocols').value=JSON.stringify(c.models.protocols||{},null,2);$('#c-idle').value=c.performance.max_idle_conns;$('#c-idle-host').value=c.performance.max_idle_conns_per_host;$('#c-max-host').value=c.performance.max_conns_per_host;$('#c-idle-timeout').value=c.performance.idle_conn_timeout_seconds;$('#c-connect').value=c.performance.connect_timeout_seconds;$('#c-cooldown').value=c.performance.failure_cooldown_seconds;$('#c-level').value=c.logging.level;$('#c-ring').value=c.logging.ring_size;['server_keys','zen_keys','go_keys','proxies'].forEach(renderChips);const restart=$('#restart-notice');if(c.restart_required_fields?.length){restart.textContent=`以下配置已保存但尚未生效：${c.restart_required_fields.join(', ')}。当前 API ${c.effective.listen}、WebUI ${c.effective.webui_listen}。请重启服务。`;restart.classList.remove('hidden')}else restart.classList.add('hidden')}
-  function renderChips(name){const host=$(`#${name}-chips`);host.innerHTML='';(config[name]||[]).forEach(item=>{const chip=document.createElement('span');chip.className='chip';chip.dataset.id=item.id;chip.innerHTML=`<span></span><button type="button" title="移除">×</button>`;chip.querySelector('span').textContent=item.display;chip.querySelector('button').onclick=()=>chip.remove();host.appendChild(chip)})}
-  function secretInputs(name){const kept=[...$(`#${name}-chips`).children].map(x=>({id:x.dataset.id}));const added=$(`#${name}-new`).value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map(value=>({value}));return kept.concat(added)}
-  function number(id){return Number($(id).value)}
-  $('#config-form').addEventListener('submit',async e=>{e.preventDefault();try{const update={listen:$('#c-listen').value,server_keys:secretInputs('server_keys'),zen_keys:secretInputs('zen_keys'),go_keys:secretInputs('go_keys'),anonymous:$('#c-anonymous').checked,proxies:secretInputs('proxies'),proxyfile:$('#c-proxyfile').value,prefer:$('#c-prefer').value,upstream:{zen:$('#c-up-zen').value,go:$('#c-up-go').value},retry:{max_attempts:number('#c-attempts'),timeout_seconds:number('#c-timeout')},models:{refresh_seconds:number('#c-refresh'),protocols:JSON.parse($('#c-protocols').value||'{}')},performance:{max_idle_conns:number('#c-idle'),max_idle_conns_per_host:number('#c-idle-host'),max_conns_per_host:number('#c-max-host'),idle_conn_timeout_seconds:number('#c-idle-timeout'),connect_timeout_seconds:number('#c-connect'),failure_cooldown_seconds:number('#c-cooldown')},logging:{level:$('#c-level').value,ring_size:number('#c-ring')},webui:{enabled:$('#c-web-enabled').checked,listen:$('#c-web-listen').value,username:config.webui.username,session_ttl_minutes:number('#c-session')}};const result=await api('/api/config',{method:'PUT',body:JSON.stringify(update)});config=result.config;['server_keys','zen_keys','go_keys','proxies'].forEach(n=>$(`#${n}-new`).value='');fillConfig(config);toast(result.result.restart_required?`已应用；${result.result.restart_fields.join(', ')} 需重启`:'配置已保存并立即应用')}catch(err){toast(err.message,true)}});
-	$('#reload-config').onclick=async()=>{try{const r=await api('/api/config/reload',{method:'POST',body:'{}'});await loadConfig();toast(r.restart_required?'磁盘配置已重载，监听字段需重启':'磁盘配置已重载')}catch(e){toast(e.message,true)}};
-	$('#reveal').onclick=async()=>{const password=prompt('请再次输入管理密码');if(password===null)return;try{const values=await api('/api/config/reveal',{method:'POST',body:JSON.stringify({password})});$('#modal-content').textContent=JSON.stringify(values,null,2);$('#modal').classList.remove('hidden')}catch(e){toast(e.message,true)}};$('#modal-close').onclick=()=>{$('#modal').classList.add('hidden');$('#modal-content').textContent=''};
-	$('#account-form').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/account',{method:'PUT',body:JSON.stringify({current_password:$('#a-current').value,username:$('#a-user').value,new_password:$('#a-new').value})});toast('账号已更新，请重新登录');setTimeout(showLogin,800)}catch(err){toast(err.message,true)}});
-	async function refreshMonitor(){try{const data=await api('/api/monitor');$('#version').textContent=`version ${data.version}`;const m=data.metrics;$('#m-total').textContent=m.last_hour.total.toLocaleString();$('#m-rate').innerHTML=`${(m.last_hour.success_rate*100).toFixed(1)}<small>%</small>`;$('#m-p95').innerHTML=`${m.last_hour.p95_ms||0}<small> ms</small>`;$('#m-active').innerHTML=`${m.active_requests}<small> / ${m.active_streams}</small>`;$('#proxy-table').innerHTML=data.resources.proxies.map(p=>`<tr><td>${esc(p.address)}</td><td class="${p.healthy?'ok':'bad'}">${p.healthy?'正常':'不可用'}</td><td>Z ${p.zen_keys} · G ${p.go_keys} · A ${p.anonymous?'开':'关'}</td></tr>`).join('')||'<tr><td colspan="3">无数据</td></tr>';const anonymous=data.resources.anonymous?'<tr><td>anonymous</td><td>zen</td><td class="ok">已启用</td></tr>':'';$('#key-table').innerHTML=anonymous+data.resources.keys.map(k=>`<tr><td>${k.id}</td><td>${k.tier}</td><td class="${k.cooldown_until?'warn':'ok'}">${k.cooldown_until?'冷却中':'可用'}</td></tr>`).join('')||'<tr><td colspan="3">无数据</td></tr>';$('#breakdowns').innerHTML=breakdown('端点',m.endpoints)+breakdown('状态码',m.statuses)+breakdown('模型',m.models)+breakdown('Tier',m.tiers)}catch(e){}}
-	function breakdown(title,data){return `<div><h3>${title}</h3><table class="table">${Object.entries(data).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')||'<tr><td>暂无请求</td></tr>'}</table></div>`}
-	function connectLogs(){if(eventSource)eventSource.close();eventSource=new EventSource('/api/logs/stream');eventSource.addEventListener('log',e=>{const item=JSON.parse(e.data);logEvents.push(item);if(logEvents.length>2000)logEvents.shift();if(!paused&&!logRenderPending){logRenderPending=true;requestAnimationFrame(()=>{logRenderPending=false;renderLogs()})}});eventSource.addEventListener('gap',()=>toast('较早的日志已从内存清除',true))}
-  function renderLogs(){const level=$('#log-level').value,component=$('#log-component').value.toLowerCase(),query=$('#log-search').value.toLowerCase();const rows=logEvents.filter(x=>(!level||x.level===level)&&(!component||(x.component||'').toLowerCase().includes(component))&&(!query||JSON.stringify(x).toLowerCase().includes(query))).slice(-500);$('#log-list').innerHTML=rows.map(x=>`<div class="log"><span class="time">${new Date(x.time).toLocaleTimeString()}</span><span class="level ${x.level==='error'?'bad':x.level==='warn'?'warn':x.level==='info'?'ok':''}">${x.level}</span><span class="component">${esc(x.component||'core')}</span><span>${esc(x.message)}</span><span class="fields">${esc(JSON.stringify(x.fields||{}))}</span></div>`).join('');$('#log-list').scrollTop=$('#log-list').scrollHeight}
-	['#log-level','#log-component','#log-search'].forEach(id=>$(id).addEventListener('input',renderLogs));$('#log-pause').onclick=()=>{paused=!paused;$('#log-pause').textContent=paused?'继续':'暂停';if(!paused)renderLogs()};function esc(v){const d=document.createElement('div');d.textContent=String(v);return d.innerHTML}boot();
+    const $ = selector => document.querySelector(selector);
+    const $$ = selector => [...document.querySelectorAll(selector)];
+    let csrf = '';
+    let config = null;
+    let logEvents = [];
+    let eventSource = null;
+    let paused = false;
+    let monitorTimer = null;
+    let logRenderPending = false;
+
+    async function api(path, options = {}) {
+      options.headers = { ...(options.headers || {}), Accept: 'application/json' };
+      if (options.body) options.headers['Content-Type'] = 'application/json';
+      if (csrf && !['GET', 'HEAD'].includes(options.method || 'GET')) options.headers['X-CSRF-Token'] = csrf;
+      const response = await fetch(path, options);
+      if (response.status === 401) {
+        showLogin();
+        throw new Error('登录已失效');
+      }
+      if (response.status === 204) return null;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error && data.error.message ? data.error.message : 'HTTP ' + response.status);
+      return data;
+    }
+
+    let toastTimer;
+    function toast(message, bad = false) {
+      const el = $('#toast');
+      el.textContent = message;
+      el.classList.toggle('bad', bad);
+      el.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+    }
+
+    function showLogin() {
+      csrf = '';
+      $('#app').classList.add('hidden');
+      $('#login').classList.remove('hidden');
+      if (eventSource) eventSource.close();
+      clearInterval(monitorTimer);
+    }
+
+    const titles = {
+      overview: { title: '运行总览', sub: '最近一小时的服务状态', index: '01 / operating record' },
+      config: { title: '配置中心', sub: '按影响范围分组，验证后原子保存并立即应用', index: '02 / configuration center' },
+      logs: { title: '实时日志', sub: '结构化事件流 · 支持筛选、暂停与断流提示', index: '03 / event stream' },
+      account: { title: '账号安全', sub: '修改后会撤销所有登录会话', index: '04 / account security' }
+    };
+
+    function setPage(page) {
+      const meta = titles[page];
+      $$('.workspace-nav button').forEach(button => button.classList.toggle('active', button.dataset.page === page));
+      $$('.page').forEach(view => view.classList.toggle('hidden', view.id !== 'page-' + page));
+      $('#page-title').textContent = meta.title;
+      $('#page-sub').textContent = meta.sub;
+      $('#page-index').textContent = meta.index;
+      $('#rail-index').textContent = meta.index;
+      $('#rail-page-title').textContent = meta.title;
+      $('#rail-page-sub').textContent = meta.sub;
+    }
+
+    async function boot() {
+      try {
+        const session = await api('/api/auth/session');
+        csrf = session.csrf_token;
+        $('#login').classList.add('hidden');
+        $('#app').classList.remove('hidden');
+        await loadConfig();
+        await refreshMonitor();
+        monitorTimer = setInterval(refreshMonitor, 3000);
+        connectLogs();
+      } catch (error) {
+        showLogin();
+      }
+    }
+
+    $('#login-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      $('#login-error').textContent = '';
+      try {
+        const session = await api('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ username: $('#login-user').value, password: $('#login-pass').value })
+        });
+        csrf = session.csrf_token;
+        $('#login-pass').value = '';
+        $('#login').classList.add('hidden');
+        $('#app').classList.remove('hidden');
+        await loadConfig();
+        await refreshMonitor();
+        clearInterval(monitorTimer);
+        monitorTimer = setInterval(refreshMonitor, 3000);
+        connectLogs();
+      } catch (error) {
+        $('#login-error').textContent = error.message;
+      }
+    });
+
+    $('#logout').addEventListener('click', async () => {
+      try {
+        await api('/api/auth/logout', { method: 'POST' });
+      } finally {
+        showLogin();
+      }
+    });
+
+    $$('.workspace-nav button').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
+
+    async function loadConfig() {
+      config = await api('/api/config');
+      fillConfig(config);
+    }
+
+    function fillConfig(value) {
+      $('#c-listen').value = value.listen;
+      $('#c-prefer').value = value.prefer;
+      $('#c-web-listen').value = value.webui.listen;
+      $('#c-session').value = value.webui.session_ttl_minutes;
+      $('#c-web-enabled').checked = value.webui.enabled;
+      $('#c-anonymous').checked = !!value.anonymous;
+      $('#c-proxyfile').value = value.proxyfile;
+      $('#c-up-zen').value = value.upstream.zen;
+      $('#c-up-go').value = value.upstream.go;
+      $('#c-attempts').value = value.retry.max_attempts;
+      $('#c-timeout').value = value.retry.timeout_seconds;
+      $('#c-refresh').value = value.models.refresh_seconds;
+      $('#c-protocols').value = JSON.stringify(value.models.protocols || {}, null, 2);
+      $('#c-idle').value = value.performance.max_idle_conns;
+      $('#c-idle-host').value = value.performance.max_idle_conns_per_host;
+      $('#c-max-host').value = value.performance.max_conns_per_host;
+      $('#c-idle-timeout').value = value.performance.idle_conn_timeout_seconds;
+      $('#c-connect').value = value.performance.connect_timeout_seconds;
+      $('#c-cooldown').value = value.performance.failure_cooldown_seconds;
+      $('#c-level').value = value.logging.level;
+      $('#c-ring').value = value.logging.ring_size;
+      ['server_keys', 'zen_keys', 'go_keys', 'proxies'].forEach(renderChips);
+      const restart = $('#restart-notice');
+      if (value.restart_required_fields && value.restart_required_fields.length) {
+        restart.innerHTML = '<div><strong>配置中有字段等待重启</strong><small>以下配置已保存但尚未生效：' + esc(value.restart_required_fields.join(', ')) + '。当前 API ' + esc(value.effective.listen) + '、WebUI ' + esc(value.effective.webui_listen) + '。</small></div><button class="button" type="button" id="restart-detail">查看影响</button>';
+        restart.classList.remove('hidden');
+        $('#restart-detail').addEventListener('click', () => toast('需要重启的字段：' + value.restart_required_fields.join(', ')));
+      } else {
+        restart.classList.add('hidden');
+        restart.textContent = '';
+      }
+    }
+
+    function renderChips(name) {
+      const host = $('#' + name + '-chips');
+      host.innerHTML = '';
+      (config[name] || []).forEach(item => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.dataset.id = item.id;
+        chip.innerHTML = '<span></span><button type="button" title="移除">×</button>';
+        chip.querySelector('span').textContent = item.display;
+        chip.querySelector('button').addEventListener('click', () => chip.remove());
+        host.appendChild(chip);
+      });
+    }
+
+    function secretInputs(name) {
+      const kept = [...$('#' + name + '-chips').children].map(item => ({ id: item.dataset.id }));
+      const added = $('#' + name + '-new').value.split(/\r?\n/).map(item => item.trim()).filter(Boolean).map(value => ({ value }));
+      return kept.concat(added);
+    }
+
+    function number(id) {
+      return Number($(id).value);
+    }
+
+    $('#config-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        const update = {
+          listen: $('#c-listen').value,
+          server_keys: secretInputs('server_keys'),
+          zen_keys: secretInputs('zen_keys'),
+          go_keys: secretInputs('go_keys'),
+          anonymous: $('#c-anonymous').checked,
+          proxies: secretInputs('proxies'),
+          proxyfile: $('#c-proxyfile').value,
+          prefer: $('#c-prefer').value,
+          upstream: { zen: $('#c-up-zen').value, go: $('#c-up-go').value },
+          retry: { max_attempts: number('#c-attempts'), timeout_seconds: number('#c-timeout') },
+          models: { refresh_seconds: number('#c-refresh'), protocols: JSON.parse($('#c-protocols').value || '{}') },
+          performance: {
+            max_idle_conns: number('#c-idle'),
+            max_idle_conns_per_host: number('#c-idle-host'),
+            max_conns_per_host: number('#c-max-host'),
+            idle_conn_timeout_seconds: number('#c-idle-timeout'),
+            connect_timeout_seconds: number('#c-connect'),
+            failure_cooldown_seconds: number('#c-cooldown')
+          },
+          logging: { level: $('#c-level').value, ring_size: number('#c-ring') },
+          webui: { enabled: $('#c-web-enabled').checked, listen: $('#c-web-listen').value, username: config.webui.username, session_ttl_minutes: number('#c-session') }
+        };
+        const result = await api('/api/config', { method: 'PUT', body: JSON.stringify(update) });
+        config = result.config;
+        ['server_keys', 'zen_keys', 'go_keys', 'proxies'].forEach(name => $('#' + name + '-new').value = '');
+        fillConfig(config);
+        toast(result.result.restart_required ? '已应用；' + result.result.restart_fields.join(', ') + ' 需要重启' : '配置已保存并立即应用');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+
+    $('#reload-config').addEventListener('click', async () => {
+      try {
+        const result = await api('/api/config/reload', { method: 'POST', body: '{}' });
+        await loadConfig();
+        toast(result.restart_required ? '磁盘配置已重载，监听字段需要重启' : '磁盘配置已重载');
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+
+    $('#reveal').addEventListener('click', async () => {
+      const password = prompt('请再次输入管理密码');
+      if (password === null) return;
+      try {
+        const values = await api('/api/config/reveal', { method: 'POST', body: JSON.stringify({ password }) });
+        $('#modal-content').textContent = JSON.stringify(values, null, 2);
+        $('#modal').classList.remove('hidden');
+        $('#modal-close').focus();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+
+    function closeModal() {
+      $('#modal').classList.add('hidden');
+      $('#modal-content').textContent = '';
+    }
+    $('#modal-close').addEventListener('click', closeModal);
+    $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) closeModal(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
+
+    $('#account-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try {
+        await api('/api/account', { method: 'PUT', body: JSON.stringify({ current_password: $('#a-current').value, username: $('#a-user').value, new_password: $('#a-new').value }) });
+        toast('账号已更新，请重新登录');
+        setTimeout(showLogin, 800);
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+
+    async function refreshMonitor() {
+      try {
+        const data = await api('/api/monitor');
+        $('#version').textContent = 'version ' + data.version;
+        const metrics = data.metrics;
+        $('#m-total').textContent = metrics.last_hour.total.toLocaleString();
+        $('#m-rate').innerHTML = (metrics.last_hour.success_rate * 100).toFixed(1) + '<small>%</small>';
+        $('#m-p95').innerHTML = (metrics.last_hour.p95_ms || 0) + '<small> ms</small>';
+        $('#m-active').innerHTML = metrics.active_requests + '<small> / ' + metrics.active_streams + '</small>';
+        $('#proxy-table').innerHTML = (data.resources.proxies || []).map(proxy => '<tr><td>' + esc(proxy.address) + '</td><td><span class="state ' + (proxy.healthy ? 'ok' : 'bad') + '">' + (proxy.healthy ? '正常' : '不可用') + '</span></td><td>Z ' + proxy.zen_keys + ' · G ' + proxy.go_keys + ' · A ' + (proxy.anonymous ? '开' : '关') + '</td></tr>').join('') || '<tr><td colspan="3" class="empty">无 Proxy 数据</td></tr>';
+        const anonymous = data.resources.anonymous ? '<tr><td>anonymous</td><td>zen</td><td><span class="state ok">已启用</span></td></tr>' : '';
+        $('#key-table').innerHTML = anonymous + (data.resources.keys || []).map(key => '<tr><td>' + esc(key.id) + '</td><td>' + esc(key.tier) + '</td><td><span class="state ' + (key.cooldown_until ? 'warn' : 'ok') + '">' + (key.cooldown_until ? '冷却中' : '可用') + '</span></td></tr>').join('') || '<tr><td colspan="3" class="empty">无 Key 数据</td></tr>';
+        $('#breakdowns').innerHTML = breakdown('端点', metrics.endpoints) + breakdown('状态码', metrics.statuses) + breakdown('模型', metrics.models) + breakdown('Tier', metrics.tiers);
+      } catch (error) {
+        /* 状态请求失败时保留页面结构，避免控制台变成空白。 */
+      }
+    }
+
+    function breakdown(title, data) {
+      const rows = Object.entries(data || {}).sort((a, b) => b[1] - a[1]).slice(0, 10).map(entry => '<tr><td>' + esc(entry[0]) + '</td><td>' + entry[1] + '</td></tr>').join('');
+      return '<div><h3>' + title + '</h3><table class="table">' + (rows || '<tr><td class="empty">暂无请求</td></tr>') + '</table></div>';
+    }
+
+    function connectLogs() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource('/api/logs/stream');
+      eventSource.addEventListener('log', event => {
+        logEvents.push(JSON.parse(event.data));
+        if (logEvents.length > 2000) logEvents.shift();
+        if (!paused && !logRenderPending) {
+          logRenderPending = true;
+          requestAnimationFrame(() => { logRenderPending = false; renderLogs(); });
+        }
+      });
+      eventSource.addEventListener('gap', () => toast('较早的日志已从内存清除', true));
+    }
+
+    function renderLogs() {
+      const level = $('#log-level').value;
+      const component = $('#log-component').value.toLowerCase();
+      const query = $('#log-search').value.toLowerCase();
+      const rows = logEvents.filter(item => (!level || item.level === level) && (!component || (item.component || '').toLowerCase().includes(component)) && (!query || JSON.stringify(item).toLowerCase().includes(query))).slice(-500);
+      if (!rows.length) {
+        $('#log-list').innerHTML = '<div class="logs-empty">暂无符合条件的事件。连接 SSE 后，最新事件会出现在这里。</div>';
+        return;
+      }
+      $('#log-list').innerHTML = rows.map(item => '<div class="log"><span class="time">' + new Date(item.time).toLocaleTimeString() + '</span><span class="level ' + (item.level === 'error' ? 'error' : item.level === 'warn' ? 'warn' : '') + '">' + esc(item.level) + '</span><span class="component">' + esc(item.component || 'core') + '</span><span>' + esc(item.message) + '<br><span class="component">' + esc(JSON.stringify(item.fields || {})) + '</span></span></div>').join('');
+      $('#log-list').scrollTop = $('#log-list').scrollHeight;
+    }
+
+    ['#log-level', '#log-component', '#log-search'].forEach(id => $(id).addEventListener('input', renderLogs));
+    $('#log-pause').addEventListener('click', () => {
+      paused = !paused;
+      $('#log-pause').textContent = paused ? '继续流' : '暂停流';
+      if (!paused) renderLogs();
+    });
+
+    function esc(value) {
+      const div = document.createElement('div');
+      div.textContent = String(value);
+      return div.innerHTML;
+    }
+
+    boot();
   </script>
 </body>
 </html>

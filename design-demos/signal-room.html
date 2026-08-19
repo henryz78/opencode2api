@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signal Room · opencode2api</title>
+  <style>
+    /*
+      方向 A · Signal Room / 信号室
+      假设：这是高频值守场景，用户先判断健康，再进入异常资源。
+      设计推理：深炭底取自「设备控制室」语境，低饱和铜色作为唯一品牌信号；
+      不用霓虹渐变，不把每个区块做成卡片，而是用大面积状态板、规则线和抽屉感分层。
+      当前文件是离线可点击的视觉初稿；数字与日志明确为演示态，尚未连接真实 API。
+    */
+    :root {
+      color-scheme: dark;
+      --ink: #f1ede4;
+      --muted: #a39e93;
+      --dim: #6e6a63;
+      --bg: #171513;
+      --surface: #211e1a;
+      --surface-2: #2a2621;
+      --line: #3a342d;
+      --line-soft: #2b2722;
+      --signal: #dca46a;
+      --signal-soft: #453426;
+      --ok: #8eb99a;
+      --warn: #e5b36a;
+      --bad: #dc837c;
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --display: Georgia, "Noto Serif SC", "Songti SC", serif;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.65; }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 92px minmax(0, 1fr); }
+    .rail { border-right: 1px solid var(--line); padding: 24px 12px 18px; display: flex; flex-direction: column; background: #151311; }
+    .mark { display: grid; gap: 5px; padding: 0 5px 27px; }
+    .mark-name { font: 700 16px/1 var(--display); letter-spacing: -.04em; }
+    .mark-name span { color: var(--signal); }
+    .mark-code { color: var(--dim); font: 10px/1.2 var(--mono); letter-spacing: .05em; }
+    .nav { display: grid; gap: 8px; }
+    .nav button { min-height: 54px; display: grid; gap: 2px; align-content: center; border: 1px solid transparent; border-radius: 6px; padding: 6px 4px; background: transparent; color: var(--muted); text-align: center; }
+    .nav button:hover, .nav button.active { border-color: var(--line); background: var(--surface); color: var(--ink); }
+    .nav button.active { box-shadow: inset 2px 0 var(--signal); }
+    .nav .num { color: var(--signal); font: 10px/1 var(--mono); }
+    .nav button:not(.active) .num { color: var(--dim); }
+    .rail-foot { margin-top: auto; padding: 13px 4px 0; border-top: 1px solid var(--line-soft); color: var(--dim); font: 10px/1.6 var(--mono); text-align: center; }
+    .workspace { min-width: 0; padding: 26px clamp(20px, 4vw, 58px) 56px; }
+    .utility { display: flex; justify-content: space-between; gap: 24px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 16px; color: var(--muted); font: 11px var(--mono); letter-spacing: .02em; }
+    .utility-left, .utility-right, .actions, .inline { display: flex; gap: 10px; align-items: center; }
+    .live { display: inline-flex; align-items: center; gap: 7px; color: var(--ok); }
+    .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px #8eb99a20; }
+    .preview { padding: 3px 6px; border: 1px solid var(--line); color: var(--dim); }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(260px, .75fr); gap: clamp(22px, 5vw, 70px); padding: 45px 0 38px; border-bottom: 1px solid var(--line); }
+    .eyebrow { color: var(--signal); font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { max-width: 720px; font: 500 clamp(42px, 6vw, 84px)/.98 var(--display); letter-spacing: -.055em; text-wrap: balance; }
+    .hero-copy { max-width: 640px; margin-top: 21px; color: var(--muted); font-size: 16px; text-wrap: pretty; }
+    .hero-side { align-self: end; padding-left: 18px; border-left: 1px solid var(--line); }
+    .side-label { color: var(--dim); font: 11px var(--mono); text-transform: uppercase; }
+    .side-value { margin-top: 7px; font: 22px/1.2 var(--display); }
+    .side-note { margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .notice { display: flex; justify-content: space-between; gap: 18px; align-items: center; border: 1px solid #76583c; background: var(--signal-soft); padding: 13px 15px; margin: 22px 0; }
+    .notice strong { color: #f0c995; font-weight: 650; }
+    .notice small { color: #c4a980; }
+    .button { min-height: 40px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); padding: 7px 13px; color: var(--ink); }
+    .button:hover { border-color: var(--signal); }
+    .button.primary { border-color: var(--signal); background: var(--signal); color: #21170f; font-weight: 750; }
+    .button.ghost { background: transparent; }
+    .section-head { display: flex; justify-content: space-between; gap: 15px; align-items: end; margin: 29px 0 13px; }
+    .section-head h2 { font: 500 26px/1.1 var(--display); letter-spacing: -.03em; }
+    .section-head p { color: var(--dim); font: 11px var(--mono); }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .metric { min-height: 118px; padding: 18px 16px 15px 0; border-right: 1px solid var(--line); }
+    .metric + .metric { padding-left: 18px; }
+    .metric:last-child { border-right: 0; }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .metric-value { margin-top: 10px; font: 500 34px/1 var(--display); letter-spacing: -.04em; }
+    .metric-value em { color: var(--signal); font: 14px var(--mono); font-style: normal; }
+    .metric-note { margin-top: 9px; color: var(--dim); font: 10px var(--mono); }
+    .overview-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 24px; }
+    .panel { min-width: 0; border-top: 1px solid var(--line); padding-top: 14px; }
+    .panel-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .panel-title h3 { font-size: 15px; font-weight: 650; }
+    .panel-title span { color: var(--dim); font: 10px var(--mono); }
+    .resource-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .resource-table th, .resource-table td { padding: 11px 7px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+    .resource-table th { color: var(--dim); font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .resource-table td:last-child, .resource-table th:last-child { text-align: right; }
+    .resource-table tr:hover td { background: #2a252030; }
+    .state { display: inline-flex; align-items: center; gap: 7px; }
+    .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+    .state.warn::before { background: var(--warn); }
+    .state.bad::before { background: var(--bad); }
+    .state.ok { color: var(--ok); }
+    .state.warn { color: var(--warn); }
+    .state.bad { color: var(--bad); }
+    .breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .breakdown-block { border-top: 1px solid var(--line-soft); padding-top: 11px; }
+    .breakdown-label { margin-bottom: 7px; color: var(--dim); font: 10px var(--mono); text-transform: uppercase; }
+    .bar-row { display: grid; grid-template-columns: 90px 1fr 38px; gap: 8px; align-items: center; padding: 4px 0; color: var(--muted); font-size: 12px; }
+    .bar { height: 3px; background: var(--line); }
+    .bar i { display: block; height: 100%; background: var(--signal); }
+    .bar-row b { color: var(--ink); font: 11px var(--mono); text-align: right; }
+    .view.hidden { display: none; }
+    .config-wrap, .account-wrap { max-width: 980px; }
+    .config-lead { display: flex; justify-content: space-between; gap: 20px; align-items: end; padding: 42px 0 25px; border-bottom: 1px solid var(--line); }
+    .config-lead h1 { font-size: clamp(42px, 5vw, 68px); }
+    .config-lead p { max-width: 350px; color: var(--muted); font-size: 13px; }
+    .form-section { border-bottom: 1px solid var(--line); padding: 23px 0 27px; }
+    .form-section summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 15px; font: 500 21px/1.2 var(--display); }
+    .form-section summary::-webkit-details-marker { display: none; }
+    .form-section summary::after { content: "+"; color: var(--signal); font: 20px var(--mono); }
+    .form-section[open] summary::after { content: "−"; }
+    .form-section summary small { display: block; margin-top: 6px; color: var(--muted); font: 12px/1.5 var(--sans); }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 22px; margin-top: 21px; }
+    .field { display: grid; gap: 6px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { color: var(--muted); font: 11px var(--mono); }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 3px; background: #151311; color: var(--ink); padding: 10px 11px; }
+    textarea { min-height: 74px; resize: vertical; }
+    .field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--signal); }
+    .check { display: flex; gap: 10px; align-items: center; color: var(--ink); font-size: 14px; }
+    .keys { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; }
+    .key { border: 1px solid var(--line); border-radius: 3px; padding: 4px 7px; color: var(--muted); font: 11px var(--mono); }
+    .key button { border: 0; padding: 0 0 0 5px; background: transparent; color: var(--bad); }
+    .config-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 24px; }
+    .logs-view { min-width: 0; }
+    .logs-head { display: flex; justify-content: space-between; gap: 15px; align-items: end; padding: 42px 0 22px; border-bottom: 1px solid var(--line); }
+    .logs-head h1 { font-size: clamp(42px, 5vw, 68px); }
+    .filters { display: grid; grid-template-columns: 130px 150px minmax(160px, 1fr) auto; gap: 8px; margin: 17px 0; }
+    .log-pane { border: 1px solid var(--line); background: #12110f; font: 12px/1.7 var(--mono); }
+    .log-line { display: grid; grid-template-columns: 86px 55px 100px minmax(0, 1fr); gap: 10px; padding: 8px 11px; border-bottom: 1px solid #25211d; }
+    .log-line:hover { background: var(--surface); }
+    .log-line .meta { color: var(--dim); }
+    .log-line .level { color: var(--ok); }
+    .log-line .level.warn { color: var(--warn); }
+    .log-line .level.error { color: var(--bad); }
+    .account-card { max-width: 620px; border-top: 1px solid var(--line); padding-top: 15px; margin-top: 34px; }
+    .account-card h2 { font: 500 30px var(--display); }
+    .account-card p { margin: 9px 0 21px; color: var(--muted); font-size: 13px; }
+    .account-card .field + .field { margin-top: 15px; }
+    .toast { position: fixed; right: 24px; bottom: 24px; border: 1px solid var(--signal); background: var(--signal-soft); color: #f4d9b4; padding: 11px 14px; transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s ease; }
+    .toast.show { transform: none; opacity: 1; }
+    @media (max-width: 980px) { .hero, .overview-grid { grid-template-columns: 1fr; } .hero-side { max-width: 420px; } .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric:nth-child(2) { border-right: 0; } .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); } }
+    @media (max-width: 680px) { .shell { display: block; } .rail { position: sticky; z-index: 3; top: 0; display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); } .mark { padding: 0 10px 0 0; border-right: 1px solid var(--line); } .nav { flex: 1; grid-template-columns: repeat(4, 1fr); gap: 4px; } .nav button { min-height: 43px; } .rail-foot { display: none; } .workspace { padding: 18px 16px 40px; } .utility { align-items: flex-start; flex-direction: column; gap: 7px; } .hero { padding: 31px 0 28px; } h1 { font-size: clamp(42px, 14vw, 66px); } .metrics, .field-grid, .filters { grid-template-columns: 1fr; } .metric, .metric + .metric { border-right: 0; border-bottom: 1px solid var(--line); padding: 15px 0; } .metric:last-child { border-bottom: 0; } .notice { align-items: flex-start; flex-direction: column; } .breakdown { grid-template-columns: 1fr; } .log-line { grid-template-columns: 68px 48px 1fr; } .log-line .component { display: none; } .config-lead, .logs-head { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="工作区导航">
+      <div class="mark"><div class="mark-name">opencode<span>2api</span></div><div class="mark-code">CONTROL / 01</div></div>
+      <nav class="nav">
+        <button class="active" data-view="overview"><span class="num">01</span><span>总览</span></button>
+        <button data-view="config"><span class="num">02</span><span>配置</span></button>
+        <button data-view="logs"><span class="num">03</span><span>日志</span></button>
+        <button data-view="account"><span class="num">04</span><span>账号</span></button>
+      </nav>
+      <div class="rail-foot">VERSION<br><span>preview / —</span></div>
+    </aside>
+    <main class="workspace">
+      <div class="utility"><div class="utility-left"><span class="live">LIVE</span><span class="preview">VISUAL PROTOTYPE · API NOT CONNECTED</span></div><div class="utility-right"><span>管理员 · admin</span><button class="button ghost" data-toast="已退出原型态">退出</button></div></div>
+
+      <section class="view" data-page="overview">
+        <div class="hero"><div><div class="eyebrow">01 / service pulse</div><h1>先看信号，<br>再处理问题。</h1><p class="hero-copy">把请求、上游、Key 池和事件流放在同一条判断路径上。这里的首屏只回答一个问题：服务现在是否值得信任。</p></div><div class="hero-side"><div class="side-label">当前判断</div><div class="side-value">接入后显示实时状态</div><p class="side-note">演示态不填充假统计。生产版由 <code>/api/monitor</code> 返回。</p></div></div>
+        <div class="notice"><div><strong>重启影响待确认</strong><br><small>配置保存后，监听地址和 WebUI 开关不会立即生效。</small></div><button class="button" data-toast="已打开重启字段清单">查看影响</button></div>
+        <div class="section-head"><h2>运行读数</h2><p>LAST HOUR · PLACEHOLDER</p></div>
+        <div class="metrics"><div class="metric"><div class="metric-label">请求总数</div><div class="metric-value">—</div><div class="metric-note">等待监控数据</div></div><div class="metric"><div class="metric-label">成功率</div><div class="metric-value">— <em>%</em></div><div class="metric-note">按最近一小时聚合</div></div><div class="metric"><div class="metric-label">P95 延迟</div><div class="metric-value">— <em>ms</em></div><div class="metric-note">包含上游等待</div></div><div class="metric"><div class="metric-label">活跃 / 流式</div><div class="metric-value">— <em>/ —</em></div><div class="metric-note">当前连接数</div></div></div>
+        <div class="overview-grid"><div class="panel"><div class="panel-title"><h3>Proxy 状态</h3><span>RESOURCES.PROXIES</span></div><table class="resource-table"><thead><tr><th>地址</th><th>健康</th><th>绑定</th></tr></thead><tbody><tr><td>接入后显示 Proxy</td><td><span class="state">待同步</span></td><td>—</td></tr><tr><td>direct</td><td><span class="state warn">待验证</span></td><td>Z — · G —</td></tr></tbody></table></div><div class="panel"><div class="panel-title"><h3>Key 池</h3><span>RESOURCES.KEYS</span></div><table class="resource-table"><thead><tr><th>ID</th><th>Tier</th><th>状态</th></tr></thead><tbody><tr><td>server-••••</td><td>server</td><td><span class="state">待同步</span></td></tr><tr><td>zen-••••</td><td>zen</td><td><span class="state warn">待验证</span></td></tr></tbody></table></div></div>
+        <div class="panel"><div class="panel-title"><h3>最近一小时聚合</h3><span>TOP 10 · EMPTY STATE</span></div><div class="breakdown"><div class="breakdown-block"><div class="breakdown-label">端点</div><div class="bar-row"><span>等待数据</span><div class="bar"><i style="width: 0"></i></div><b>—</b></div></div><div class="breakdown-block"><div class="breakdown-label">状态码</div><div class="bar-row"><span>等待数据</span><div class="bar"><i style="width: 0"></i></div><b>—</b></div></div><div class="breakdown-block"><div class="breakdown-label">模型</div><div class="bar-row"><span>等待数据</span><div class="bar"><i style="width: 0"></i></div><b>—</b></div></div><div class="breakdown-block"><div class="breakdown-label">Tier</div><div class="bar-row"><span>等待数据</span><div class="bar"><i style="width: 0"></i></div><b>—</b></div></div></div></div>
+      </section>
+
+      <section class="view hidden" data-page="config"><div class="config-wrap"><div class="config-lead"><div><div class="eyebrow">02 / configuration</div><h1>把改动说清楚。</h1></div><p>按影响范围分组。先改运行参数，再决定是否暴露敏感值；保存结果会明确告诉你哪些字段需要重启。</p></div><form onsubmit="return false"><details class="form-section" open><summary><span>服务边界<small>监听、优先 Tier、WebUI 会话</small></span></summary><div class="field-grid"><div class="field"><label>API LISTEN</label><input value="0.0.0.0:8080"></div><div class="field"><label>优先 TIER</label><select><option>go</option><option>zen</option></select></div><div class="field"><label>WEBUI LISTEN</label><input value="0.0.0.0:8081"></div><div class="field"><label>SESSION TTL（分钟）</label><input value="120"></div><div class="field full"><label class="check"><input type="checkbox" checked> 启用 WebUI（修改后需要重启）</label></div></div></details><details class="form-section"><summary><span>密钥与 Proxy<small>默认脱敏；查看完整值需要二次验证</small></span></summary><div class="field-grid"><div class="field full"><label>SERVER KEYS</label><div class="keys"><span class="key">••••8d2a <button type="button">×</button></span><span class="key">••••4f10 <button type="button">×</button></span></div><textarea placeholder="每行新增一个 key"></textarea></div><div class="field"><label>ZEN KEYS</label><textarea placeholder="每行新增一个 key"></textarea></div><div class="field"><label>GO KEYS</label><textarea placeholder="每行新增一个 key"></textarea></div><div class="field full"><label class="check"><input type="checkbox"> 启用 Zen 匿名模式</label></div></div></details><details class="form-section"><summary><span>上游与重试<small>Zen / Go URL、超时与模型协议</small></span></summary><div class="field-grid"><div class="field"><label>ZEN URL</label><input value="https://api.zen.local"></div><div class="field"><label>GO URL</label><input value="https://api.go.local"></div><div class="field"><label>最大尝试次数</label><input value="3"></div><div class="field"><label>请求超时（秒）</label><input value="60"></div><div class="field full"><label>模型协议覆盖（JSON）</label><textarea>{}</textarea></div></div></details><details class="form-section"><summary><span>性能与日志<small>连接池、失败冷却、日志级别与 Ring Size</small></span></summary><div class="field-grid"><div class="field"><label>MAX IDLE CONNS</label><input value="100"></div><div class="field"><label>MAX IDLE / HOST</label><input value="20"></div><div class="field"><label>CONNECT TIMEOUT（秒）</label><input value="10"></div><div class="field"><label>LOG LEVEL</label><select><option>info</option><option>debug</option><option>warn</option><option>error</option></select></div></div></details><div class="config-actions"><button class="button" type="button" data-toast="已从磁盘重载演示配置">从磁盘重载</button><button class="button" type="button" data-toast="演示态已验证；生产版将调用 PUT /api/config">验证、保存并应用</button></div></form></div></section>
+
+      <section class="view hidden" data-page="logs"><div class="logs-view"><div class="logs-head"><div><div class="eyebrow">03 / event stream</div><h1>只留下有用的噪声。</h1></div><div class="inline"><span class="live">SSE READY</span><button class="button" data-pause>暂停</button></div></div><div class="filters"><select><option>全部级别</option><option>info</option><option>warn</option><option>error</option></select><input placeholder="模块"><input placeholder="搜索事件、request ID、模型…"><button class="button" data-toast="筛选条件已应用">筛选</button></div><div class="log-pane"><div class="log-line"><span class="meta">—:—:—</span><span class="level">info</span><span class="meta">monitor</span><span>接入后显示实时事件 · 演示态没有伪造日志</span></div><div class="log-line"><span class="meta">—:—:—</span><span class="level warn">warn</span><span class="meta">config</span><span>断流或历史事件缺口会在这里明确提示</span></div><div class="log-line"><span class="meta">—:—:—</span><span class="level error">error</span><span class="meta">gateway</span><span>生产版保留后端返回的真实 message 与 fields</span></div></div></div></section>
+
+      <section class="view hidden" data-page="account"><div class="account-wrap"><div class="config-lead"><div><div class="eyebrow">04 / account security</div><h1>安全操作，<br>不制造惊吓。</h1></div><p>账号更新会撤销所有登录会话。这里把影响写在动作旁边，而不是藏在提交之后。</p></div><form class="account-card" onsubmit="return false"><h2>更新管理账号</h2><p>留空的字段保持不变；新密码至少 10 个字符。</p><div class="field"><label>新账号</label><input placeholder="留空保持不变"></div><div class="field"><label>当前密码</label><input type="password" placeholder="用于验证本次变更"></div><div class="field"><label>新密码</label><input type="password" placeholder="留空保持不变"></div><div class="config-actions"><button class="button primary" type="button" data-toast="演示态：将 PUT /api/account 并重新登录">更新并重新登录</button></div></form></div></section>
+    </main>
+  </div>
+  <div class="toast" role="status"></div>
+  <script>
+    const toast = document.querySelector('.toast');
+    let timer;
+    function showToast(message) { toast.textContent = message; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 2600); }
+    document.querySelectorAll('[data-toast]').forEach(button => button.addEventListener('click', () => showToast(button.dataset.toast)));
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-view]').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('[data-page]').forEach(view => view.classList.toggle('hidden', view.dataset.page !== button.dataset.view));
+    }));
+    const pauseButton = document.querySelector('[data-pause]');
+    if (pauseButton) pauseButton.addEventListener('click', () => { pauseButton.textContent = pauseButton.textContent === '暂停' ? '继续' : '暂停'; showToast(pauseButton.textContent === '继续' ? '日志流已暂停' : '日志流已继续'); });
+  </script>
+</body>
+</html>
