@@ -282,6 +282,22 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 	return result
 }
 
+func (m *RuntimeManager) DebugModels() DebugModelsResponse {
+	runtime := m.current.Load()
+	if runtime == nil {
+		return DebugModelsResponse{Object: "list", Data: []DebugModel{}}
+	}
+	return runtime.gateway.DebugModels()
+}
+
+func (m *RuntimeManager) DebugRoute(model string) (DebugRouteInfo, error) {
+	runtime := m.current.Load()
+	if runtime == nil {
+		return DebugRouteInfo{}, fmt.Errorf("runtime is unavailable")
+	}
+	return runtime.gateway.DebugRoute(model)
+}
+
 func keyStatuses(tier string, pool *nodePool) []KeyStatus {
 	result := make([]KeyStatus, 0, len(pool.nodes))
 	for _, node := range pool.nodes {

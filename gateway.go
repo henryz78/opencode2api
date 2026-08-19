@@ -70,6 +70,35 @@ type healthProxies struct {
 	Unhealthy int `json:"unhealthy"`
 }
 
+type DebugModel struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name,omitempty"`
+	Access        string  `json:"access"`
+	Tier          string  `json:"tier,omitempty"`
+	Protocol      string  `json:"protocol,omitempty"`
+	Free          bool    `json:"free"`
+	MetadataKnown bool    `json:"metadata_known"`
+	Status        string  `json:"status,omitempty"`
+	CostInput     float64 `json:"cost_input,omitempty"`
+	CostOutput    float64 `json:"cost_output,omitempty"`
+}
+
+type DebugModelsResponse struct {
+	Object        string                `json:"object"`
+	Data          []DebugModel          `json:"data"`
+	Metadata      modelMetadataSnapshot `json:"metadata"`
+	AnonymousOnly bool                  `json:"anonymous_only"`
+}
+
+type DebugRouteInfo struct {
+	Tier          string `json:"tier,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+	Anonymous     bool   `json:"anonymous"`
+	Free          bool   `json:"free"`
+	MetadataKnown bool   `json:"metadata_known"`
+	MetadataReady bool   `json:"metadata_ready"`
+}
+
 func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor, metadata *modelMetadataCatalog) (*Gateway, error) {
 	transports, err := newTransportPool(cfg.RuntimeProxies(), cfg.Performance, time.Duration(cfg.Retry.TimeoutSeconds)*time.Second)
 	if err != nil {
@@ -213,6 +242,75 @@ func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 		data = append(data, map[string]any{"id": model, "object": "model", "created": now, "owned_by": "opencode"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+}
+
+func (g *Gateway) DebugModels() DebugModelsResponse {
+	metadata := modelMetadataSnapshot{}
+	if g.metadata != nil {
+		metadata = g.metadata.Snapshot()
+	}
+	anonymousOnly := g.cfg.Anonymous && len(g.cfg.ZenKeys) == 0 && len(g.cfg.GoKeys) == 0
+	models := make([]DebugModel, 0)
+	for _, model := range g.catalog.List() {
+		if !supportedModel(model) {
+			continue
+		}
+		if anonymousOnly && metadata.Ready && !g.catalog.anonymousEligible(model) {
+			continue
+		}
+		entry, metadataEntryKnown := modelMetadataEntry{}, false
+		if g.metadata != nil {
+			entry, metadataEntryKnown = g.metadata.Lookup(model)
+		}
+		route, routeErr := g.DebugRoute(model)
+		access := "unknown"
+		if routeErr != nil {
+			access = "unavailable"
+		} else if route.Anonymous {
+			access = "anonymous"
+		} else {
+			access = "key"
+		}
+		name := entry.Name
+		if name == "" {
+			name = model
+		}
+		models = append(models, DebugModel{
+			ID:            model,
+			Name:          name,
+			Access:        access,
+			Tier:          route.Tier,
+			Protocol:      route.Protocol,
+			Free:          metadataEntryKnown && entry.Free,
+			MetadataKnown: metadataEntryKnown && entry.KnownCost,
+			Status:        entry.Status,
+			CostInput:     entry.CostInput,
+			CostOutput:    entry.CostOutput,
+		})
+	}
+	return DebugModelsResponse{Object: "list", Data: models, Metadata: metadata, AnonymousOnly: anonymousOnly}
+}
+
+func (g *Gateway) DebugRoute(model string) (DebugRouteInfo, error) {
+	metadataReady := false
+	metadataKnown := false
+	free := false
+	if g.metadata != nil {
+		metadata := g.metadata.Snapshot()
+		metadataReady = metadata.Ready
+		if entry, ok := g.metadata.Lookup(model); ok {
+			metadataKnown = entry.KnownCost
+			free = entry.Free
+		}
+	}
+	if g.metadata == nil {
+		free = isFreeModel(model)
+	}
+	route, err := g.catalog.Route(model, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
+	if err != nil {
+		return DebugRouteInfo{Free: free, MetadataKnown: metadataKnown, MetadataReady: metadataReady}, err
+	}
+	return DebugRouteInfo{Tier: string(route.Tier), Protocol: string(route.Protocol), Anonymous: route.Anonymous, Free: free, MetadataKnown: metadataKnown, MetadataReady: metadataReady}, nil
 }
 
 func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {

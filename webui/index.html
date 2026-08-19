@@ -109,6 +109,16 @@
     .restart { display: flex; justify-content: space-between; gap: 17px; align-items: center; margin: 22px 0; border: 1px solid var(--accent); background: var(--accent-soft); padding: 13px 15px; }
     .restart strong { display: block; color: var(--accent-dark); font-weight: 700; }
     .restart small { color: #875245; }
+    .setup-card { margin: 23px 0 0; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--line); padding: 13px 0 16px; }
+    .setup-card.is-ready { border-top-color: var(--ok); }
+    .setup-head { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; }
+    .setup-head h3 { font: 500 24px/1.2 var(--display); letter-spacing: -.035em; }
+    .setup-head small { color: var(--muted); font: 11px var(--mono); }
+    .setup-checks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .setup-check { border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-size: 12px; }
+    .setup-check strong { display: block; color: var(--bad); font: 11px var(--mono); }
+    .setup-check.ready strong { color: var(--ok); }
+    .setup-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 13px; }
 
     /* Overview */
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 32px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
@@ -169,6 +179,8 @@
     .debug-status { min-height: 22px; margin-top: 6px; color: var(--faint); font: 11px var(--mono); }
     .debug-status.ok { color: var(--ok); }
     .debug-status.bad { color: var(--bad); }
+    .debug-model-tools { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; margin-top: 10px; }
+    .debug-model-detail { min-height: 45px; margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font: 11px/1.6 var(--mono); }
     .debug-options { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
     .debug-privacy { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 20px; border-top: 1px solid var(--line); padding-top: 11px; color: var(--faint); font: 11px var(--mono); }
     .debug-privacy .state { color: var(--ok); }
@@ -275,6 +287,7 @@
       .diagnostic-card:nth-child(4) { border-right: 0; }
       .diagnostic-event { grid-template-columns: 68px 48px minmax(0, 1fr); }
       .diagnostic-event .component { display: none; }
+      .setup-checks { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
@@ -328,6 +341,7 @@
         <div id="restart-notice" class="restart hidden" role="status"></div>
 
         <section id="page-overview" class="page">
+          <section id="setup-card" class="setup-card"><div class="setup-head"><h3>首次运行检查</h3><small id="setup-summary">正在读取配置状态……</small></div><div id="setup-checks" class="setup-checks"></div><div class="setup-actions"><button id="setup-open-config" class="button" type="button">进入配置中心</button></div></section>
           <div class="metrics">
             <div class="metric"><div class="label">请求总数</div><div id="m-total" class="metric-value">—</div><div class="metric-note">最近一小时</div></div>
             <div class="metric"><div class="label">成功率</div><div id="m-rate" class="metric-value">—</div><div class="metric-note">按小时聚合</div></div>
@@ -346,7 +360,7 @@
             <form id="debug-form" class="debug-panel">
               <div class="debug-panel-head"><h3>测试设置</h3><span>ADMIN PROXY</span></div>
               <p class="debug-note">模型请求会通过当前管理会话转发到本地 API。浏览器不会拿到真实 Server Key，也不会把 Key 写入 localStorage。</p>
-              <div class="field"><label for="debug-model">模型</label><div class="debug-model-control"><select id="debug-model" required><option value="">先获取模型</option></select><button id="debug-refresh-models" class="button" type="button">获取模型</button></div><div id="debug-model-status" class="debug-status">尚未读取模型目录</div></div>
+              <div class="field"><label for="debug-model">模型</label><div class="debug-model-control"><select id="debug-model" required><option value="">先获取模型</option></select><button id="debug-refresh-models" class="button" type="button">获取模型</button></div><div class="debug-model-tools"><select id="debug-model-filter"><option value="all">全部模型</option><option value="anonymous">匿名可用</option><option value="key">需要官方 Key</option><option value="unknown">未确认</option></select><input id="debug-model-search" placeholder="搜索模型"></div><div id="debug-model-detail" class="debug-model-detail">选择模型后显示它的路由资格与元数据状态。</div><div id="debug-model-status" class="debug-status">尚未读取模型目录</div></div>
               <div class="field"><label for="debug-system">系统提示词（可选）</label><textarea id="debug-system" rows="4" placeholder="例如：请简洁回答，使用中文。"></textarea></div>
               <div class="field"><label for="debug-prompt">用户消息</label><textarea id="debug-prompt" rows="7" required placeholder="输入一条测试消息">Hi</textarea></div>
               <div class="debug-options"><div class="field"><label for="debug-temperature">TEMPERATURE</label><input id="debug-temperature" type="number" min="0" max="2" step="0.1" value="0.7"></div><div class="field"><label for="debug-max-tokens">MAX TOKENS</label><input id="debug-max-tokens" type="number" min="1" step="1" value="1024"></div></div>
@@ -354,7 +368,7 @@
               <div class="debug-actions"><button id="debug-clear" class="button" type="button">清空输入</button><button id="debug-send" class="button primary" type="submit">发送测试</button></div>
               <div id="debug-error" class="debug-error" role="alert"></div>
             </form>
-            <section class="debug-panel"><div class="debug-panel-head"><h3>对话工作台</h3><div class="inline"><span id="debug-latency" class="debug-status">未发送</span><button id="debug-reset" class="button" type="button">清空记录</button></div></div><div id="debug-transcript" class="debug-transcript" aria-live="polite"><div class="debug-empty">获取模型后发送一条消息<br>这里会显示完整的测试往返</div></div><div class="debug-meta"><span id="debug-model-used">MODEL —</span><span id="debug-request-id">REQUEST —</span></div><details class="debug-raw"><summary>查看原始响应 JSON</summary><pre id="debug-raw">{}</pre></details></section>
+            <section class="debug-panel"><div class="debug-panel-head"><h3>对话工作台</h3><div class="inline"><span id="debug-latency" class="debug-status">未发送</span><button id="debug-reset" class="button" type="button">清空记录</button></div></div><div id="debug-transcript" class="debug-transcript" aria-live="polite"><div class="debug-empty">获取模型后发送一条消息<br>这里会显示完整的测试往返</div></div><div class="debug-meta"><span id="debug-model-used">MODEL —</span><span id="debug-route">ROUTE —</span><span id="debug-request-id">REQUEST —</span></div><details class="debug-raw"><summary>查看原始响应 JSON</summary><pre id="debug-raw">{}</pre></details></section>
           </div>
         </section>
 
@@ -403,9 +417,12 @@
     let monitorTimer = null;
     let logRenderPending = false;
     let debugModelsLoaded = false;
+    let debugModelCatalog = [];
     let debugHistory = [];
     let lastDebugTrace = null;
     let lastAPIRequestID = '';
+    let lastAPIResponseMeta = {};
+    let monitorData = null;
 
     async function api(path, options = {}) {
       options.headers = { ...(options.headers || {}), Accept: 'application/json' };
@@ -417,7 +434,16 @@
         throw new Error('登录已失效');
       }
       if (response.status === 204) return null;
-      if (response.headers.get('X-Request-Id')) lastAPIRequestID = response.headers.get('X-Request-Id');
+      lastAPIResponseMeta = {
+        requestID: response.headers.get('X-Request-Id') || '',
+        tier: response.headers.get('X-Debug-Tier') || '',
+        protocol: response.headers.get('X-Debug-Protocol') || '',
+        anonymous: response.headers.get('X-Debug-Anonymous') || '',
+        free: response.headers.get('X-Debug-Free') || '',
+        metadataKnown: response.headers.get('X-Debug-Metadata-Known') || '',
+        metadataReady: response.headers.get('X-Debug-Metadata-Ready') || ''
+      };
+      if (lastAPIResponseMeta.requestID) lastAPIRequestID = lastAPIResponseMeta.requestID;
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error && data.error.message ? data.error.message : 'HTTP ' + response.status);
       return data;
@@ -510,6 +536,7 @@
     });
 
     $$('.workspace-nav button').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
+    $('#setup-open-config').addEventListener('click', () => setPage('config'));
 
     function setDebugError(message, bad = true) {
       const el = $('#debug-error');
@@ -517,8 +544,34 @@
       el.style.color = bad ? 'var(--bad)' : 'var(--ok)';
     }
 
-    async function loadDebugModels() {
+    function modelAccessLabel(access) {
+      return access === 'anonymous' ? '匿名可用' : access === 'key' ? '需要官方 Key' : access === 'unavailable' ? '当前不可用' : '未确认';
+    }
+
+    function updateDebugModelDetail() {
+      const selected = debugModelCatalog.find(item => item.id === $('#debug-model').value);
+      const detail = $('#debug-model-detail');
+      if (!selected) {
+        detail.textContent = '选择模型后显示它的路由资格与元数据状态。';
+        return;
+      }
+      const cost = selected.metadata_known ? (selected.free ? '价格 0 · 免费' : '存在价格 · 需要 Key') : '价格元数据未知';
+      const route = selected.tier ? selected.tier.toUpperCase() + ' / ' + (selected.protocol || '—') : '尚未确定';
+      detail.textContent = (selected.name && selected.name !== selected.id ? selected.name + ' · ' : '') + modelAccessLabel(selected.access) + ' · ' + cost + ' · 当前路由 ' + route;
+    }
+
+    function renderDebugModelOptions() {
       const select = $('#debug-model');
+      const filter = $('#debug-model-filter').value;
+      const query = $('#debug-model-search').value.trim().toLowerCase();
+      const previous = select.value;
+      const models = debugModelCatalog.filter(item => (!query || (item.id + ' ' + (item.name || '')).toLowerCase().includes(query)) && (filter === 'all' || item.access === filter));
+      select.innerHTML = models.length ? models.map(item => '<option value="' + esc(item.id) + '">' + esc(item.id) + ' · ' + esc(modelAccessLabel(item.access)) + '</option>').join('') : '<option value="">没有符合条件的模型</option>';
+      if (models.length) select.value = models.some(item => item.id === previous) ? previous : models[0].id;
+      updateDebugModelDetail();
+    }
+
+    async function loadDebugModels() {
       const status = $('#debug-model-status');
       const refresh = $('#debug-refresh-models');
       refresh.disabled = true;
@@ -526,12 +579,16 @@
       status.textContent = '正在读取当前模型目录……';
       try {
         const result = await api('/api/debug/models');
-        const models = Array.isArray(result.data) ? result.data.filter(item => item && item.id) : [];
-        select.innerHTML = models.length ? models.map(item => '<option value="' + esc(item.id) + '">' + esc(item.id) + '</option>').join('') : '<option value="">暂无可用模型</option>';
+        debugModelCatalog = Array.isArray(result.data) ? result.data.filter(item => item && item.id) : [];
+        renderDebugModelOptions();
         debugModelsLoaded = true;
-        if (models.length) {
+        if (debugModelCatalog.length) {
+          const counts = debugModelCatalog.reduce((all, item) => { all[item.access] = (all[item.access] || 0) + 1; return all; }, {});
+          const metadata = result.metadata || {};
+          const metadataState = metadata.last_error ? '价格记录刷新失败，沿用缓存' : metadata.ready ? (metadata.stale ? '价格记录已过期' : '价格记录已更新') : '价格记录等待首次刷新';
+          const mode = result.anonymous_only ? '匿名筛选' : '混合路由';
           status.className = 'debug-status ok';
-          status.textContent = '已获取 ' + models.length + ' 个可用模型；默认选中第一个。';
+          status.textContent = '已获取 ' + debugModelCatalog.length + ' 个模型 · ' + mode + ' · 匿名 ' + (counts.anonymous || 0) + ' · Key ' + (counts.key || 0) + ' · 未确认 ' + (counts.unknown || 0) + ' · ' + metadataState;
           setDebugError('');
         } else {
           status.className = 'debug-status bad';
@@ -539,6 +596,8 @@
         }
       } catch (error) {
         debugModelsLoaded = false;
+        debugModelCatalog = [];
+        renderDebugModelOptions();
         status.className = 'debug-status bad';
         status.textContent = '获取失败';
         setDebugError(error.message);
@@ -640,16 +699,20 @@
         $('#debug-model-used').textContent = 'MODEL ' + model;
         const elapsed = Math.round(performance.now() - started);
         const requestID = lastAPIRequestID || result.id || '—';
+        const routeLabel = lastAPIResponseMeta.anonymous === 'true' ? 'ANONYMOUS / PUBLIC' : lastAPIResponseMeta.tier ? lastAPIResponseMeta.tier.toUpperCase() : 'UNKNOWN';
         $('#debug-request-id').textContent = 'REQUEST ' + requestID;
+        $('#debug-route').textContent = 'ROUTE ' + routeLabel + ' / ' + (lastAPIResponseMeta.protocol || '—');
         $('#debug-latency').textContent = elapsed + ' ms';
-        lastDebugTrace = { status: 'ok', model, request_id: requestID, elapsed_ms: elapsed, response_id: result.id || '', at: new Date().toISOString() };
+        lastDebugTrace = { status: 'ok', model, request_id: requestID, route: routeLabel, protocol: lastAPIResponseMeta.protocol || '—', anonymous: lastAPIResponseMeta.anonymous === 'true', free: lastAPIResponseMeta.free === 'true', metadata_known: lastAPIResponseMeta.metadataKnown === 'true', metadata_ready: lastAPIResponseMeta.metadataReady === 'true', elapsed_ms: elapsed, response_id: result.id || '', at: new Date().toISOString() };
         if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
       } catch (error) {
         const elapsed = Math.round(performance.now() - started);
         const message = /invalid api key/i.test(error.message) ? '上游凭据无效：请到配置中心检查 Zen Keys / Go Keys。' : error.message;
         setDebugError(message);
         $('#debug-latency').textContent = '失败 · ' + elapsed + ' ms';
-        lastDebugTrace = { status: 'error', model, request_id: lastAPIRequestID || '—', elapsed_ms: elapsed, error: message, at: new Date().toISOString() };
+        const routeLabel = lastAPIResponseMeta.anonymous === 'true' ? 'ANONYMOUS / PUBLIC' : lastAPIResponseMeta.tier ? lastAPIResponseMeta.tier.toUpperCase() : 'UNKNOWN';
+        $('#debug-route').textContent = 'ROUTE ' + routeLabel + ' / ' + (lastAPIResponseMeta.protocol || '—');
+        lastDebugTrace = { status: 'error', model, request_id: lastAPIRequestID || '—', route: routeLabel, protocol: lastAPIResponseMeta.protocol || '—', anonymous: lastAPIResponseMeta.anonymous === 'true', free: lastAPIResponseMeta.free === 'true', metadata_known: lastAPIResponseMeta.metadataKnown === 'true', metadata_ready: lastAPIResponseMeta.metadataReady === 'true', elapsed_ms: elapsed, error: message, at: new Date().toISOString() };
         if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
       } finally {
         $('#debug-send').disabled = false;
@@ -657,15 +720,36 @@
     }
 
     $('#debug-refresh-models').addEventListener('click', loadDebugModels);
+    $('#debug-model-filter').addEventListener('change', renderDebugModelOptions);
+    $('#debug-model-search').addEventListener('input', renderDebugModelOptions);
+    $('#debug-model').addEventListener('change', updateDebugModelDetail);
     $('#diagnostic-refresh').addEventListener('click', loadDiagnostics);
     $('#debug-form').addEventListener('submit', event => { event.preventDefault(); sendDebugMessage(); });
     $('#debug-clear').addEventListener('click', () => { $('#debug-system').value = ''; $('#debug-prompt').value = ''; setDebugError(''); });
-    $('#debug-reset').addEventListener('click', () => { debugHistory = []; lastDebugTrace = null; renderDebugTranscript(); $('#debug-raw').textContent = '{}'; $('#debug-model-used').textContent = 'MODEL —'; $('#debug-request-id').textContent = 'REQUEST —'; $('#debug-latency').textContent = '未发送'; setDebugError(''); if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics(); });
+    $('#debug-reset').addEventListener('click', () => { debugHistory = []; lastDebugTrace = null; renderDebugTranscript(); $('#debug-raw').textContent = '{}'; $('#debug-model-used').textContent = 'MODEL —'; $('#debug-route').textContent = 'ROUTE —'; $('#debug-request-id').textContent = 'REQUEST —'; $('#debug-latency').textContent = '未发送'; setDebugError(''); if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics(); });
     $('#debug-prompt').addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); sendDebugMessage(); } });
+
+    function renderSetupChecklist() {
+      if (!config || !monitorData) return;
+      const resources = monitorData.resources || {};
+      const proxies = Array.isArray(resources.proxies) ? resources.proxies : [];
+      const metadata = resources.model_metadata || {};
+      const checks = [
+        { label: '本地访问 Key', ready: Array.isArray(config.server_keys) && config.server_keys.length > 0 },
+        { label: '上游通道', ready: !!config.anonymous || (Array.isArray(config.zen_keys) && config.zen_keys.length > 0) || (Array.isArray(config.go_keys) && config.go_keys.length > 0) },
+        { label: '健康 Proxy', ready: proxies.some(proxy => proxy.healthy) },
+        { label: '价格元数据', ready: !!metadata.ready && !metadata.last_error }
+      ];
+      const readyCount = checks.filter(item => item.ready).length;
+      $('#setup-checks').innerHTML = checks.map(item => '<div class="setup-check ' + (item.ready ? 'ready' : '') + '"><strong>' + (item.ready ? 'READY' : 'CHECK') + '</strong>' + item.label + '</div>').join('');
+      $('#setup-summary').textContent = readyCount === checks.length ? '基础链路已齐 · 可以开始 Playground' : '还有 ' + (checks.length - readyCount) + ' 项需要确认';
+      $('#setup-card').classList.toggle('is-ready', readyCount === checks.length);
+    }
 
     async function loadConfig() {
       config = await api('/api/config');
       fillConfig(config);
+      renderSetupChecklist();
     }
 
     function fillConfig(value) {
@@ -700,6 +784,7 @@
         restart.classList.add('hidden');
         restart.textContent = '';
       }
+      renderSetupChecklist();
     }
 
     function renderChips(name) {
@@ -807,6 +892,8 @@
     async function refreshMonitor() {
       try {
         const data = await api('/api/monitor');
+        monitorData = data;
+        renderSetupChecklist();
         $('#version').textContent = 'version ' + data.version;
         const metrics = data.metrics;
         $('#m-total').textContent = metrics.last_hour.total.toLocaleString();

@@ -394,16 +394,7 @@ func (a *AdminServer) handleMonitor(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *AdminServer) handleDebugModels(w http.ResponseWriter, _ *http.Request) {
-	status, headers, body := a.debugGatewayRequest(http.MethodGet, "/v1/models", nil)
-	if status == 0 {
-		writeAdminError(w, http.StatusBadGateway, "debug_unavailable", "no local server key is configured")
-		return
-	}
-	if status/100 != 2 {
-		writeDebugError(w, http.StatusBadGateway, "debug_models_failed", debugResponseMessage(status, body), headers)
-		return
-	}
-	writeDebugResponse(w, status, headers, body)
+	writeJSON(w, http.StatusOK, a.manager.DebugModels())
 }
 
 func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +408,8 @@ func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
 		writeAdminError(w, http.StatusBadRequest, "invalid_model", "model is required")
 		return
 	}
+	routeInfo, _ := a.manager.DebugRoute(strings.TrimSpace(model))
+	setDebugRouteHeaders(w, routeInfo)
 	messages, ok := input["messages"].([]any)
 	if !ok || len(messages) == 0 {
 		writeAdminError(w, http.StatusBadRequest, "invalid_messages", "at least one message is required")
@@ -483,6 +476,19 @@ func writeDebugError(w http.ResponseWriter, status int, code, message string, he
 		w.Header().Set("X-Request-Id", requestID)
 	}
 	writeAdminError(w, status, code, message)
+}
+
+func setDebugRouteHeaders(w http.ResponseWriter, route DebugRouteInfo) {
+	if route.Tier != "" {
+		w.Header().Set("X-Debug-Tier", route.Tier)
+	}
+	if route.Protocol != "" {
+		w.Header().Set("X-Debug-Protocol", route.Protocol)
+	}
+	w.Header().Set("X-Debug-Anonymous", strconv.FormatBool(route.Anonymous))
+	w.Header().Set("X-Debug-Free", strconv.FormatBool(route.Free))
+	w.Header().Set("X-Debug-Metadata-Known", strconv.FormatBool(route.MetadataKnown))
+	w.Header().Set("X-Debug-Metadata-Ready", strconv.FormatBool(route.MetadataReady))
 }
 
 func debugResponseMessage(status int, body []byte) string {
