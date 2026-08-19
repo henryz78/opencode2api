@@ -33,6 +33,7 @@ type Gateway struct {
 	goNodes    *nodePool
 	anonymous  *anonymousPool
 	catalog    *modelCatalog
+	metadata   *modelMetadataCatalog
 	monitor    *Monitor
 }
 
@@ -69,7 +70,7 @@ type healthProxies struct {
 	Unhealthy int `json:"unhealthy"`
 }
 
-func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor) (*Gateway, error) {
+func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor, metadata *modelMetadataCatalog) (*Gateway, error) {
 	transports, err := newTransportPool(cfg.RuntimeProxies(), cfg.Performance, time.Duration(cfg.Retry.TimeoutSeconds)*time.Second)
 	if err != nil {
 		return nil, err
@@ -83,6 +84,8 @@ func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor) (*Gateway, er
 	if err != nil {
 		return nil, fmt.Errorf("go node pool: %w", err)
 	}
+	catalog := newModelCatalog(cfg.Prefer, cfg.Models.Protocols)
+	catalog.metadata = metadata
 	return &Gateway{
 		cfg:        cfg,
 		logger:     logger,
@@ -90,7 +93,8 @@ func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor) (*Gateway, er
 		zenNodes:   zenNodes,
 		goNodes:    goNodes,
 		anonymous:  newAnonymousPool(cfg.Anonymous, transports, cooldown),
-		catalog:    newModelCatalog(cfg.Prefer, cfg.Models.Protocols),
+		catalog:    catalog,
+		metadata:   metadata,
 		monitor:    monitor,
 	}, nil
 }
@@ -196,9 +200,14 @@ func (g *Gateway) authenticate(next http.HandlerFunc) http.HandlerFunc {
 func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 	now := time.Now().Unix()
 	models := g.catalog.List()
+	metadataReady := g.metadata != nil && g.metadata.Snapshot().Ready
+	anonymousOnly := g.cfg.Anonymous && len(g.cfg.ZenKeys) == 0 && len(g.cfg.GoKeys) == 0
 	data := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		if !supportedModel(model) {
+			continue
+		}
+		if anonymousOnly && metadataReady && !g.catalog.anonymousEligible(model) {
 			continue
 		}
 		data = append(data, map[string]any{"id": model, "object": "model", "created": now, "owned_by": "opencode"})

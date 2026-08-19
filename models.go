@@ -6,12 +6,233 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+const (
+	modelMetadataURL             = "https://models.dev/api.json"
+	modelMetadataRefreshInterval = 24 * time.Hour
+	modelMetadataRequestTimeout  = 30 * time.Second
+)
+
+type modelsDevResponse map[string]modelsDevProvider
+
+type modelsDevProvider struct {
+	Models map[string]modelsDevModel `json:"models"`
+}
+
+type modelsDevModel struct {
+	ID     string         `json:"id"`
+	Name   string         `json:"name"`
+	Status string         `json:"status"`
+	Cost   *modelsDevCost `json:"cost"`
+}
+
+type modelsDevCost struct {
+	Input  *float64 `json:"input"`
+	Output *float64 `json:"output"`
+}
+
+type modelMetadataEntry struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name,omitempty"`
+	Status     string  `json:"status,omitempty"`
+	KnownCost  bool    `json:"known_cost"`
+	Free       bool    `json:"free"`
+	CostInput  float64 `json:"cost_input,omitempty"`
+	CostOutput float64 `json:"cost_output,omitempty"`
+}
+
+type modelMetadataCache struct {
+	UpdatedAt time.Time                     `json:"updated_at"`
+	Models    map[string]modelMetadataEntry `json:"models"`
+}
+
+type modelMetadataSnapshot struct {
+	Ready     bool      `json:"ready"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	Stale     bool      `json:"stale"`
+	Models    int       `json:"models"`
+	LastError string    `json:"last_error,omitempty"`
+}
+
+type modelMetadataCatalog struct {
+	mu        sync.RWMutex
+	cachePath string
+	models    map[string]modelMetadataEntry
+	updatedAt time.Time
+	lastError string
+}
+
+func newModelMetadataCatalog(cachePath string) *modelMetadataCatalog {
+	catalog := &modelMetadataCatalog{cachePath: cachePath, models: make(map[string]modelMetadataEntry)}
+	if cachePath == "" {
+		return catalog
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return catalog
+	}
+	var cache modelMetadataCache
+	if err := json.Unmarshal(data, &cache); err != nil || cache.Models == nil {
+		return catalog
+	}
+	catalog.models = cache.Models
+	catalog.updatedAt = cache.UpdatedAt
+	return catalog
+}
+
+func (c *modelMetadataCatalog) Start(ctx context.Context, logger *slog.Logger) {
+	go func() {
+		refresh := func() {
+			if err := c.refresh(ctx); err != nil {
+				c.mu.Lock()
+				c.lastError = err.Error()
+				c.mu.Unlock()
+				logger.Warn("model metadata refresh failed", "component", "models", "event", "metadata_refresh_failed", "error", err)
+				return
+			}
+			logger.Info("model metadata refreshed", "component", "models", "event", "metadata_refreshed", "models", c.count())
+		}
+		if c.isStale() {
+			refresh()
+		}
+		ticker := time.NewTicker(modelMetadataRefreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	}()
+}
+
+func (c *modelMetadataCatalog) refresh(ctx context.Context) error {
+	requestCtx, cancel := context.WithTimeout(ctx, modelMetadataRequestTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, modelMetadataURL, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept", "application/json")
+	client := &http.Client{Timeout: modelMetadataRequestTimeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode/100 != 2 {
+		return fmt.Errorf("models.dev returned HTTP %d", response.StatusCode)
+	}
+	var remote modelsDevResponse
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<20))
+	if err := decoder.Decode(&remote); err != nil {
+		return err
+	}
+	provider, ok := remote["opencode"]
+	if !ok || len(provider.Models) == 0 {
+		return errors.New("models.dev response has no opencode models")
+	}
+	next := make(map[string]modelMetadataEntry, len(provider.Models))
+	for key, model := range provider.Models {
+		id := model.ID
+		if id == "" {
+			id = key
+		}
+		normalized := normalizeModelID(id)
+		if normalized == "" {
+			continue
+		}
+		entry := modelMetadataEntry{ID: id, Name: model.Name, Status: model.Status}
+		if model.Cost != nil && model.Cost.Input != nil && model.Cost.Output != nil {
+			entry.KnownCost = true
+			entry.CostInput = *model.Cost.Input
+			entry.CostOutput = *model.Cost.Output
+			entry.Free = entry.Status != "deprecated" && entry.CostInput == 0 && entry.CostOutput == 0
+		}
+		next[normalized] = entry
+	}
+	if len(next) == 0 {
+		return errors.New("models.dev response has no usable opencode model entries")
+	}
+	updatedAt := time.Now().UTC()
+	cache := modelMetadataCache{UpdatedAt: updatedAt, Models: next}
+	c.mu.Lock()
+	c.models = next
+	c.updatedAt = updatedAt
+	c.lastError = ""
+	c.mu.Unlock()
+	if c.cachePath != "" {
+		data, err := json.MarshalIndent(cache, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode model metadata cache: %w", err)
+		}
+		if err := os.WriteFile(c.cachePath, data, 0600); err != nil {
+			c.mu.Lock()
+			c.lastError = err.Error()
+			c.mu.Unlock()
+			return fmt.Errorf("write model metadata cache: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *modelMetadataCatalog) Lookup(model string) (modelMetadataEntry, bool) {
+	c.mu.RLock()
+	entry, ok := c.models[normalizeModelID(model)]
+	c.mu.RUnlock()
+	return entry, ok
+}
+
+func (c *modelMetadataCatalog) IsFree(model string) bool {
+	if entry, ok := c.Lookup(model); ok {
+		return entry.KnownCost && entry.Free
+	}
+	return false
+}
+
+func (c *modelMetadataCatalog) Snapshot() modelMetadataSnapshot {
+	c.mu.RLock()
+	updatedAt, count, lastError := c.updatedAt, len(c.models), c.lastError
+	c.mu.RUnlock()
+	return modelMetadataSnapshot{
+		Ready:     !updatedAt.IsZero(),
+		UpdatedAt: updatedAt,
+		Stale:     updatedAt.IsZero() || time.Since(updatedAt) >= modelMetadataRefreshInterval,
+		Models:    count,
+		LastError: lastError,
+	}
+}
+
+func (c *modelMetadataCatalog) isStale() bool {
+	c.mu.RLock()
+	updatedAt := c.updatedAt
+	c.mu.RUnlock()
+	return updatedAt.IsZero() || time.Since(updatedAt) >= modelMetadataRefreshInterval
+}
+
+func (c *modelMetadataCatalog) count() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.models)
+}
+
+func normalizeModelID(model string) string {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if slash := strings.LastIndex(normalized, "/"); slash >= 0 {
+		normalized = normalized[slash+1:]
+	}
+	return normalized
+}
 
 type Protocol string
 
@@ -44,6 +265,7 @@ type modelCatalog struct {
 	zen       map[string]bool
 	goModels  map[string]bool
 	protocols map[string]Protocol
+	metadata  *modelMetadataCatalog
 	updatedAt time.Time
 	prefer    Tier
 }
@@ -105,7 +327,7 @@ func (c *modelCatalog) Route(model string, hasZenKeys, hasGoKeys, hasAnonymous b
 	}
 	// OpenCode's public credential is a Zen-only lane. Prefer it for free
 	// models that are known to Zen, or while the initial catalog is pending.
-	if hasAnonymous && isFreeModel(model) && (c.zen[model] || len(c.zen) == 0 && len(c.goModels) == 0) {
+	if hasAnonymous && c.anonymousEligible(model) && (c.zen[model] || len(c.zen) == 0 && len(c.goModels) == 0) {
 		return modelRoute{ID: model, Tier: TierZen, Protocol: protocol, Anonymous: true}, nil
 	}
 	// When a model exists on both tiers, honor the configured priority.
@@ -136,6 +358,13 @@ func (c *modelCatalog) Route(model string, hasZenKeys, hasGoKeys, hasAnonymous b
 
 func isFreeModel(model string) bool {
 	return strings.Contains(strings.ToLower(model), "free")
+}
+
+func (c *modelCatalog) anonymousEligible(model string) bool {
+	if c.metadata != nil {
+		return c.metadata.IsFree(model)
+	}
+	return isFreeModel(model)
 }
 
 func (c *modelCatalog) List() []string {

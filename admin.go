@@ -400,7 +400,7 @@ func (a *AdminServer) handleDebugModels(w http.ResponseWriter, _ *http.Request) 
 		return
 	}
 	if status/100 != 2 {
-		writeAdminError(w, http.StatusBadGateway, "debug_models_failed", debugResponseMessage(status, body))
+		writeDebugError(w, http.StatusBadGateway, "debug_models_failed", debugResponseMessage(status, body), headers)
 		return
 	}
 	writeDebugResponse(w, status, headers, body)
@@ -437,7 +437,7 @@ func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status/100 != 2 {
-		writeAdminError(w, http.StatusBadGateway, "debug_chat_failed", debugResponseMessage(status, responseBody))
+		writeDebugError(w, http.StatusBadGateway, "debug_chat_failed", debugResponseMessage(status, responseBody), headers)
 		return
 	}
 	writeDebugResponse(w, status, headers, responseBody)
@@ -476,6 +476,13 @@ func writeDebugResponse(w http.ResponseWriter, status int, headers http.Header, 
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+func writeDebugError(w http.ResponseWriter, status int, code, message string, headers http.Header) {
+	if requestID := headers.Get("X-Request-Id"); requestID != "" {
+		w.Header().Set("X-Request-Id", requestID)
+	}
+	writeAdminError(w, status, code, message)
 }
 
 func debugResponseMessage(status int, body []byte) string {

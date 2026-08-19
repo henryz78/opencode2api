@@ -350,8 +350,8 @@
               <div class="field"><label for="debug-system">系统提示词（可选）</label><textarea id="debug-system" rows="4" placeholder="例如：请简洁回答，使用中文。"></textarea></div>
               <div class="field"><label for="debug-prompt">用户消息</label><textarea id="debug-prompt" rows="7" required placeholder="输入一条测试消息">Hi</textarea></div>
               <div class="debug-options"><div class="field"><label for="debug-temperature">TEMPERATURE</label><input id="debug-temperature" type="number" min="0" max="2" step="0.1" value="0.7"></div><div class="field"><label for="debug-max-tokens">MAX TOKENS</label><input id="debug-max-tokens" type="number" min="1" step="1" value="1024"></div></div>
-              <div class="debug-privacy"><span class="state ok">服务端 Key</span><span>session only · no storage</span></div>
-              <div class="debug-actions"><button id="debug-quick-hi" class="button teal" type="button">发送 Hi</button><button id="debug-clear" class="button" type="button">清空输入</button><button id="debug-send" class="button primary" type="submit">发送测试</button></div>
+              <div class="debug-privacy"><span class="state ok">服务端代用</span><span>凭据不显示 · 不落盘</span></div>
+              <div class="debug-actions"><button id="debug-clear" class="button" type="button">清空输入</button><button id="debug-send" class="button primary" type="submit">发送测试</button></div>
               <div id="debug-error" class="debug-error" role="alert"></div>
             </form>
             <section class="debug-panel"><div class="debug-panel-head"><h3>对话工作台</h3><div class="inline"><span id="debug-latency" class="debug-status">未发送</span><button id="debug-reset" class="button" type="button">清空记录</button></div></div><div id="debug-transcript" class="debug-transcript" aria-live="polite"><div class="debug-empty">获取模型后发送一条消息<br>这里会显示完整的测试往返</div></div><div class="debug-meta"><span id="debug-model-used">MODEL —</span><span id="debug-request-id">REQUEST —</span></div><details class="debug-raw"><summary>查看原始响应 JSON</summary><pre id="debug-raw">{}</pre></details></section>
@@ -555,14 +555,16 @@
         const data = await api('/api/monitor');
         const resources = data.resources || {};
         const models = resources.models || {};
+        const metadata = resources.model_metadata || {};
         const proxies = Array.isArray(resources.proxies) ? resources.proxies : [];
         const keys = Array.isArray(resources.keys) ? resources.keys : [];
         const healthyProxies = proxies.filter(proxy => proxy.healthy).length;
         const coolingKeys = keys.filter(key => key.cooldown_until).length;
         const refreshed = models.updated_at ? new Date(models.updated_at).toLocaleString() : '尚未刷新';
+        const metadataState = metadata.last_error ? (metadata.ready ? '刷新失败，沿用上次记录' : '首次刷新失败') : metadata.ready ? (metadata.stale ? '价格记录已过期，沿用缓存' : '价格记录已更新') : '价格记录等待首次刷新';
         const routing = config ? String(config.prefer || '—').toUpperCase() + ' · anonymous ' + (config.anonymous ? 'on' : 'off') : '—';
         const traceStatus = lastDebugTrace ? lastDebugTrace.status : '—';
-        $('#diagnostic-cards').innerHTML = '<div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>' + (models.exposed || 0) + ' / ' + (models.total || 0) + '</strong><small>可暴露 / 已发现 · ' + esc(refreshed) + '</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>' + esc(routing) + '</strong><small>当前优先级与匿名通道</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>' + healthyProxies + ' / ' + proxies.length + '</strong><small>健康 Proxy · Key ' + keys.length + '，冷却 ' + coolingKeys + '</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>' + esc(traceStatus) + '</strong><small>' + (lastDebugTrace ? esc(lastDebugTrace.elapsed_ms + ' ms · ' + lastDebugTrace.model) : '尚未从 Playground 发起请求') + '</small></div>';
+        $('#diagnostic-cards').innerHTML = '<div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>' + (models.exposed || 0) + ' / ' + (models.total || 0) + '</strong><small>可暴露 / 已发现 · ' + esc(refreshed) + '<br>' + esc(metadataState) + '</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>' + esc(routing) + '</strong><small>当前优先级与匿名通道</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>' + healthyProxies + ' / ' + proxies.length + '</strong><small>健康 Proxy · Key ' + keys.length + '，冷却 ' + coolingKeys + '</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>' + esc(traceStatus) + '</strong><small>' + (lastDebugTrace ? esc(lastDebugTrace.elapsed_ms + ' ms · ' + lastDebugTrace.model) : '尚未从 Playground 发起请求') + '</small></div>';
         $('#diagnostic-routes').innerHTML = '<div class="diagnostic-list-row"><span>GET /v1/models</span><span>模型目录</span></div><div class="diagnostic-list-row"><span>POST /v1/chat/completions</span><span>Playground</span></div><div class="diagnostic-list-row"><span>POST /v1/responses</span><span>Responses</span></div><div class="diagnostic-list-row"><span>POST /v1/messages</span><span>Anthropic</span></div><div class="diagnostic-list-row"><span>GET /healthz</span><span>无需 API Key</span></div>';
         $('#diagnostic-trace').textContent = lastDebugTrace ? JSON.stringify(lastDebugTrace, null, 2) : '还没有来自 Playground 的请求。';
         renderDiagnosticEvents();
@@ -624,7 +626,6 @@
       renderDebugTranscript(messages);
       setDebugError('');
       $('#debug-send').disabled = true;
-      $('#debug-quick-hi').disabled = true;
       const started = performance.now();
       lastAPIRequestID = '';
       try {
@@ -645,20 +646,19 @@
         if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
       } catch (error) {
         const elapsed = Math.round(performance.now() - started);
-        setDebugError(error.message);
+        const message = /invalid api key/i.test(error.message) ? '上游凭据无效：请到配置中心检查 Zen Keys / Go Keys。' : error.message;
+        setDebugError(message);
         $('#debug-latency').textContent = '失败 · ' + elapsed + ' ms';
-        lastDebugTrace = { status: 'error', model, request_id: lastAPIRequestID || '—', elapsed_ms: elapsed, error: error.message, at: new Date().toISOString() };
+        lastDebugTrace = { status: 'error', model, request_id: lastAPIRequestID || '—', elapsed_ms: elapsed, error: message, at: new Date().toISOString() };
         if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics();
       } finally {
         $('#debug-send').disabled = false;
-        $('#debug-quick-hi').disabled = false;
       }
     }
 
     $('#debug-refresh-models').addEventListener('click', loadDebugModels);
     $('#diagnostic-refresh').addEventListener('click', loadDiagnostics);
     $('#debug-form').addEventListener('submit', event => { event.preventDefault(); sendDebugMessage(); });
-    $('#debug-quick-hi').addEventListener('click', () => { $('#debug-prompt').value = 'Hi'; sendDebugMessage('Hi'); });
     $('#debug-clear').addEventListener('click', () => { $('#debug-system').value = ''; $('#debug-prompt').value = ''; setDebugError(''); });
     $('#debug-reset').addEventListener('click', () => { debugHistory = []; lastDebugTrace = null; renderDebugTranscript(); $('#debug-raw').textContent = '{}'; $('#debug-model-used').textContent = 'MODEL —'; $('#debug-request-id').textContent = 'REQUEST —'; $('#debug-latency').textContent = '未发送'; setDebugError(''); if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics(); });
     $('#debug-prompt').addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); sendDebugMessage(); } });

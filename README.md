@@ -104,6 +104,12 @@ ghcr.io/henryz78/opencode2api
 
 工作流使用仓库自带的 `GITHUB_TOKEN`，不需要额外配置 Docker Hub 密钥。首次发布后，可在仓库的 **Packages** 中调整镜像的可见性和访问权限。
 
+## 模型元数据与匿名模式
+
+匿名模式使用 [models.dev](https://models.dev) 的 OpenCode provider 元数据判断模型是否为零价格模型，不再只依赖模型 ID 中是否包含 `free`。元数据默认每天后台刷新一次，并写入 `config.json.models.dev.json` 作为本地缓存；刷新失败时继续使用上一次成功记录，并在 WebUI 的调试信息页显示缓存状态。
+
+当匿名模式开启且没有 Zen/Go key 时，模型路由只会将元数据明确标记为零价格的模型送入匿名通道；其他模型不会被误用 `public` 凭据。
+
 ## 配置
 
 复制示例配置：

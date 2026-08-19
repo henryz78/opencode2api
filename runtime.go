@@ -34,6 +34,7 @@ type RuntimeManager struct {
 	hub        *LogHub
 	redactor   *SecretRedactor
 	level      *slog.LevelVar
+	modelMeta  *modelMetadataCatalog
 	current    atomic.Pointer[gatewayRuntime]
 	updateMu   sync.Mutex
 	effective  effectiveListeners
@@ -46,8 +47,10 @@ type effectiveListeners struct {
 }
 
 func NewRuntimeManager(root context.Context, configPath string, cfg Config, logger *slog.Logger, monitor *Monitor, hub *LogHub, redactor *SecretRedactor, level *slog.LevelVar) (*RuntimeManager, error) {
+	modelMeta := newModelMetadataCatalog(configPath + ".models.dev.json")
 	manager := &RuntimeManager{
 		configPath: configPath, root: root, logger: logger, monitor: monitor, hub: hub, redactor: redactor, level: level,
+		modelMeta: modelMeta,
 		effective: effectiveListeners{API: cfg.Listen, WebUI: cfg.WebUI.Listen, WebUIEnabled: cfg.WebUI.Enabled},
 	}
 	if cfg.WebUI.Password != "" {
@@ -72,11 +75,12 @@ func NewRuntimeManager(root context.Context, configPath string, cfg Config, logg
 	manager.redactor.Replace(cfg)
 	setLogLevel(manager.level, cfg.Logging.Level)
 	manager.start(runtime)
+	modelMeta.Start(root, logger)
 	return manager, nil
 }
 
 func (m *RuntimeManager) build(cfg Config) (*gatewayRuntime, error) {
-	gateway, err := NewGateway(cfg, m.logger, m.monitor)
+	gateway, err := NewGateway(cfg, m.logger, m.monitor, m.modelMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -220,10 +224,11 @@ func (m *RuntimeManager) Shutdown() {
 }
 
 type ResourceSnapshot struct {
-	Models    modelCatalogSnapshot `json:"models"`
-	Keys      []KeyStatus          `json:"keys"`
-	Proxies   []ProxyStatus        `json:"proxies"`
-	Anonymous bool                 `json:"anonymous"`
+	Models        modelCatalogSnapshot  `json:"models"`
+	ModelMetadata modelMetadataSnapshot `json:"model_metadata"`
+	Keys          []KeyStatus           `json:"keys"`
+	Proxies       []ProxyStatus         `json:"proxies"`
+	Anonymous     bool                  `json:"anonymous"`
 }
 
 type KeyStatus struct {
@@ -251,7 +256,11 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 		return ResourceSnapshot{}
 	}
 	gateway := runtime.gateway
-	result := ResourceSnapshot{Models: gateway.catalog.Snapshot(), Anonymous: gateway.cfg.Anonymous}
+	metadata := modelMetadataSnapshot{}
+	if gateway.metadata != nil {
+		metadata = gateway.metadata.Snapshot()
+	}
+	result := ResourceSnapshot{Models: gateway.catalog.Snapshot(), ModelMetadata: metadata, Anonymous: gateway.cfg.Anonymous}
 	result.Keys = append(result.Keys, keyStatuses("zen", gateway.zenNodes)...)
 	result.Keys = append(result.Keys, keyStatuses("go", gateway.goNodes)...)
 	gateway.zenNodes.bindingsMu.Lock()
