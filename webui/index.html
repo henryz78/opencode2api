@@ -119,6 +119,12 @@
     .setup-check strong { display: block; color: var(--bad); font: 11px var(--mono); }
     .setup-check.ready strong { color: var(--ok); }
     .setup-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 13px; }
+    .setup-tour { position: fixed; z-index: 30; inset: 0; }
+    .tour-spotlight { position: fixed; z-index: 31; border: 2px solid var(--accent); box-shadow: 0 0 0 100vmax #1d211fb3; pointer-events: none; transition: left .22s ease, top .22s ease, width .22s ease, height .22s ease; }
+    .tour-card { position: fixed; z-index: 32; width: min(370px, calc(100vw - 32px)); border: 1px solid var(--ink); background: var(--paper); padding: 18px; box-shadow: 0 18px 50px #0004; }
+    .tour-card h2 { margin-top: 10px; font: 500 28px/1.15 var(--display); letter-spacing: -.04em; }
+    .tour-card p { margin-top: 11px; color: var(--muted); font-size: 14px; }
+    .tour-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 22px; border-top: 1px solid var(--line); padding-top: 13px; }
 
     /* Overview */
     .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 32px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); }
@@ -217,6 +223,27 @@
     .diagnostic-event .level { color: var(--ok); font-weight: 700; }
     .diagnostic-event .level.warn { color: var(--warn); }
     .diagnostic-event .level.error { color: var(--bad); }
+    .diagnostic-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 19px; }
+    .diagnostic-check { border: 1px solid var(--line); background: var(--paper-soft); padding: 10px 11px; }
+    .diagnostic-check strong { display: block; color: var(--bad); font: 11px var(--mono); }
+    .diagnostic-check.ready strong { color: var(--ok); }
+    .diagnostic-check span { display: block; margin-top: 5px; font-size: 12px; }
+    .diagnostic-check small { display: block; margin-top: 4px; color: var(--faint); font: 10px var(--mono); }
+
+    /* API handoff */
+    .docs-head { margin-top: 30px; border-bottom: 1px solid var(--ink); padding-bottom: 18px; }
+    .docs-head p { max-width: 680px; margin-top: 10px; color: var(--muted); font-size: 14px; }
+    .docs-base { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; align-items: center; margin-top: 20px; }
+    .docs-base label { color: var(--muted); font: 10px var(--mono); text-transform: uppercase; }
+    .docs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 30px; }
+    .docs-card { min-width: 0; border-top: 1px solid var(--ink); padding-top: 12px; }
+    .docs-card h3 { font: 500 25px/1.2 var(--display); letter-spacing: -.035em; }
+    .docs-card p { margin: 7px 0 12px; color: var(--muted); font-size: 13px; }
+    .code-wrap { position: relative; }
+    .code-wrap pre { min-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); background: var(--paper-soft); padding: 13px; color: var(--ink); font: 11px/1.7 var(--mono); }
+    .copy-button { position: absolute; top: 8px; right: 8px; min-height: 31px; border: 1px solid var(--line); background: var(--paper); color: var(--muted); padding: 4px 8px; font: 10px var(--mono); }
+    .copy-button:hover { border-color: var(--accent); color: var(--accent); }
+    .docs-note { margin-top: 24px; border: 1px solid var(--line); background: var(--paper-deep); padding: 12px 14px; color: var(--muted); font-size: 13px; }
 
     /* Logs */
     .log-tools { display: grid; grid-template-columns: 140px 160px minmax(170px, 1fr) auto; gap: 8px; min-width: 0; margin: 17px 0; }
@@ -288,6 +315,9 @@
       .diagnostic-event { grid-template-columns: 68px 48px minmax(0, 1fr); }
       .diagnostic-event .component { display: none; }
       .setup-checks { grid-template-columns: 1fr 1fr; }
+      .tour-card { padding: 15px; }
+      .diagnostic-checks, .docs-grid { grid-template-columns: 1fr; }
+      .docs-base { grid-template-columns: 1fr; gap: 6px; }
     }
   </style>
 </head>
@@ -328,6 +358,7 @@
       <button type="button" data-page="config"><span class="nav-index">04</span><span>配置中心</span></button>
       <button type="button" data-page="logs"><span class="nav-index">05</span><span>实时日志</span></button>
       <button type="button" data-page="account"><span class="nav-index">06</span><span>账号安全</span></button>
+      <button type="button" data-page="docs"><span class="nav-index">07</span><span>接入说明</span></button>
     </nav>
     <div class="content-shell">
       <aside class="context-rail">
@@ -341,7 +372,7 @@
         <div id="restart-notice" class="restart hidden" role="status"></div>
 
         <section id="page-overview" class="page">
-          <section id="setup-card" class="setup-card"><div class="setup-head"><h3>首次运行检查</h3><small id="setup-summary">正在读取配置状态……</small></div><div id="setup-checks" class="setup-checks"></div><div class="setup-actions"><button id="setup-open-config" class="button" type="button">进入配置中心</button></div></section>
+          <section id="setup-card" class="setup-card"><div class="setup-head"><h3>首次运行检查</h3><small id="setup-summary">正在读取配置状态……</small></div><div id="setup-checks" class="setup-checks"></div><div class="setup-actions"><button id="setup-start-tour" class="button teal" type="button">开始引导</button><button id="setup-open-config" class="button" type="button">进入配置中心</button></div></section>
           <div class="metrics">
             <div class="metric"><div class="label">请求总数</div><div id="m-total" class="metric-value">—</div><div class="metric-note">最近一小时</div></div>
             <div class="metric"><div class="label">成功率</div><div id="m-rate" class="metric-value">—</div><div class="metric-note">按小时聚合</div></div>
@@ -375,6 +406,7 @@
         <section id="page-debug" class="page hidden">
           <div class="diagnostic-toolbar"><div><span class="eyebrow">03 / diagnostic surface</span><p class="diagnostic-caption">这里不发起对话，只把服务当前的可解释信号放在一起。</p></div><button id="diagnostic-refresh" class="button" type="button">刷新诊断</button></div>
           <div id="diagnostic-state" class="debug-status">等待读取状态</div>
+          <div id="diagnostic-checks" class="diagnostic-checks"></div>
           <div id="diagnostic-cards" class="diagnostic-cards"><div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>—</strong><small>尚未读取</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>—</strong><small>尚未发送</small></div></div>
           <div class="diagnostic-grid"><section class="debug-panel"><div class="debug-panel-head"><h3>路由表面</h3><span>AVAILABLE SURFACES</span></div><div id="diagnostic-routes" class="diagnostic-list"></div></section><section class="debug-panel"><div class="debug-panel-head"><h3>最近请求</h3><span>TRACE WINDOW</span></div><div id="diagnostic-trace" class="diagnostic-trace">还没有来自 Playground 的请求。</div></section></div>
           <section class="debug-panel diagnostic-events"><div class="debug-panel-head"><h3>相关事件</h3><span>RECENT EVENT STREAM</span></div><div id="diagnostic-events" class="diagnostic-event-list"><div class="logs-empty">等待实时事件……</div></div></section>
@@ -399,12 +431,18 @@
         <section id="page-account" class="page hidden">
           <div class="account-card"><h3>更新管理账号</h3><p>留空的字段保持不变。更新成功后，所有登录会话会被撤销，需要重新登录。</p><div class="account-note">影响说明：当前密码校验 → 更新账号 → 现有 session 失效 → 回到登录页。</div><form id="account-form"><div class="field"><label for="a-user">新账号（留空保持不变）</label><input id="a-user" autocomplete="username"></div><div class="field"><label for="a-current">当前密码</label><input id="a-current" type="password" autocomplete="current-password" required></div><div class="field"><label for="a-new">新密码（留空保持不变，至少 10 个字符）</label><input id="a-new" type="password" autocomplete="new-password"></div><div class="account-actions"><button class="button primary" type="submit">更新并重新登录</button></div></form></div>
         </section>
+
+        <section id="page-docs" class="page hidden">
+          <div class="docs-head"><span class="eyebrow">07 / integration notes</span><h3 style="margin-top:10px;font:500 clamp(40px,5.5vw,78px)/.98 var(--display);letter-spacing:-.065em">把它接进你的客户端。</h3><p>这里给出最短的 OpenAI-compatible 调用方式。Server Key 只用于访问本地代理，不要把 Zen/Go Key 放进客户端。</p><div class="docs-base"><label for="docs-api-base">API BASE URL</label><input id="docs-api-base" value="http://127.0.0.1:8080"></div></div>
+          <div class="docs-grid"><section class="docs-card"><h3>先看模型</h3><p>确认代理已经能返回模型目录。</p><div class="code-wrap"><button class="copy-button" type="button" data-copy-target="docs-curl-models">复制</button><pre id="docs-curl-models"></pre></div></section><section class="docs-card"><h3>发送一条消息</h3><p>把模型 ID 换成你在 Playground 里确认过的模型。</p><div class="code-wrap"><button class="copy-button" type="button" data-copy-target="docs-curl-chat">复制</button><pre id="docs-curl-chat"></pre></div></section><section class="docs-card"><h3>Python</h3><p>OpenAI SDK 兼容调用。</p><div class="code-wrap"><button class="copy-button" type="button" data-copy-target="docs-python">复制</button><pre id="docs-python"></pre></div></section><section class="docs-card"><h3>JavaScript</h3><p>浏览器或 Node.js 客户端示例。</p><div class="code-wrap"><button class="copy-button" type="button" data-copy-target="docs-javascript">复制</button><pre id="docs-javascript"></pre></div></section></div><div class="docs-note">安全提示：客户端只使用本项目的 <code>server_key</code>。Zen/Go Key、匿名 public 凭据和管理密码都留在服务端。</div>
+        </section>
       </main>
     </div>
   </div>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-card"><div class="modal-head"><h2 id="modal-title">敏感配置</h2><button id="modal-close" class="button" type="button">关闭</button></div><pre id="modal-content"></pre></div></div>
   <div id="toast" class="toast" role="status"></div>
+  <div id="setup-tour" class="setup-tour hidden" role="dialog" aria-modal="true" aria-labelledby="tour-title"><div class="tour-spotlight"></div><aside class="tour-card"><div id="tour-step" class="eyebrow">STEP 1 / 6</div><h2 id="tour-title">准备开始</h2><p id="tour-copy"></p><div class="tour-actions"><button id="tour-skip" class="button" type="button">跳过引导</button><div class="inline"><button id="tour-prev" class="button" type="button">上一步</button><button id="tour-next" class="button primary" type="button">下一步</button></div></div></aside></div>
 
   <script>
     const $ = selector => document.querySelector(selector);
@@ -423,6 +461,15 @@
     let lastAPIRequestID = '';
     let lastAPIResponseMeta = {};
     let monitorData = null;
+    let tourStepIndex = 0;
+    const tourSteps = [
+      { page: 'overview', target: '#setup-card', title: '先把环境读一遍', copy: '这是一条可跳过的初始化路径。它只会带你看关键位置，不会自动改配置，也不会替你发送请求。' },
+      { page: 'config', target: '#config-form > .manual-section:nth-of-type(1)', title: '确认服务边界', copy: '这里是监听地址、优先 Tier 和 WebUI 会话。第一次使用先看一眼，通常不需要立刻修改。' },
+      { page: 'config', target: '#config-form > .manual-section:nth-of-type(2)', title: '选择上游方式', copy: '只用免费模型就打开匿名模式并清理无效 Zen/Go Key；需要更多模型时，再配置对应的官方 Key。' },
+      { page: 'playground', target: '#debug-refresh-models', title: '获取当前模型', copy: '点击这里读取模型目录。列表会显示每个模型的匿名资格、Key 需求和元数据状态。' },
+      { page: 'playground', target: '#debug-send', title: '发出第一条请求', copy: '默认消息是 Hi。选好模型后点击发送，右侧会显示回复、耗时和真实路由。' },
+      { page: 'debug', target: '#diagnostic-checks', title: '最后看一次链路', copy: '这里能看到模型目录、价格记录、Proxy、Key 池和最近请求。完成后你可以随时跳过这条引导。' }
+    ];
 
     async function api(path, options = {}) {
       options.headers = { ...(options.headers || {}), Accept: 'application/json' };
@@ -473,7 +520,8 @@
       debug: { title: '调试信息', sub: '查看模型目录、路由、资源和最近一次请求', index: '03 / diagnostic surface' },
       config: { title: '配置中心', sub: '按影响范围分组，验证后原子保存并立即应用', index: '04 / configuration center' },
       logs: { title: '实时日志', sub: '结构化事件流 · 支持筛选、暂停与断流提示', index: '05 / event stream' },
-      account: { title: '账号安全', sub: '修改后会撤销所有登录会话', index: '06 / account security' }
+      account: { title: '账号安全', sub: '修改后会撤销所有登录会话', index: '06 / account security' },
+      docs: { title: '接入说明', sub: '复制示例，把代理接进你的客户端', index: '07 / integration notes' }
     };
 
     function setPage(page) {
@@ -488,6 +536,71 @@
       $('#rail-page-sub').textContent = meta.sub;
       if (page === 'playground' && !debugModelsLoaded) loadDebugModels();
       if (page === 'debug') loadDiagnostics();
+      if (page === 'docs') renderDocs();
+    }
+
+    function setupTourStorage(key) {
+      try { return localStorage.getItem(key) === '1'; } catch (error) { return false; }
+    }
+
+    function markSetupTour(key) {
+      try { localStorage.setItem(key, '1'); } catch (error) { /* private browsing may disable storage */ }
+    }
+
+    function startSetupTour() {
+      tourStepIndex = 0;
+      $('#setup-tour').classList.remove('hidden');
+      showSetupTourStep();
+    }
+
+    function finishSetupTour(completed) {
+      $('#setup-tour').classList.add('hidden');
+      markSetupTour(completed ? 'opencode2api.setupTourCompleted' : 'opencode2api.setupTourDismissed');
+    }
+
+    function showSetupTourStep() {
+      const step = tourSteps[tourStepIndex];
+      if (!step) return;
+      setPage(step.page);
+      $('#tour-step').textContent = 'STEP ' + (tourStepIndex + 1) + ' / ' + tourSteps.length;
+      $('#tour-title').textContent = step.title;
+      $('#tour-copy').textContent = step.copy;
+      $('#tour-prev').disabled = tourStepIndex === 0;
+      $('#tour-next').textContent = tourStepIndex === tourSteps.length - 1 ? '完成' : '下一步';
+      requestAnimationFrame(positionSetupTour);
+    }
+
+    function positionSetupTour() {
+      const step = tourSteps[tourStepIndex];
+      const target = document.querySelector(step.target);
+      const spotlight = document.querySelector('.tour-spotlight');
+      const card = document.querySelector('.tour-card');
+      if (!target || !spotlight || !card) return;
+      let rect = target.getBoundingClientRect();
+      if (rect.top < 80 || rect.bottom > window.innerHeight - 80) {
+        window.scrollTo({ top: Math.max(0, window.scrollY + rect.top - 140), behavior: 'smooth' });
+        setTimeout(positionSetupTour, 260);
+        return;
+      }
+      const pad = 8;
+      const left = Math.max(8, Math.min(rect.left - pad, window.innerWidth - rect.width - pad * 2 - 8));
+      const top = Math.max(8, rect.top - pad);
+      spotlight.style.left = left + 'px';
+      spotlight.style.top = top + 'px';
+      spotlight.style.width = Math.min(rect.width + pad * 2, window.innerWidth - left - 8) + 'px';
+      spotlight.style.height = Math.min(rect.height + pad * 2, window.innerHeight - top - 8) + 'px';
+      const cardWidth = card.getBoundingClientRect().width;
+      const cardHeight = card.getBoundingClientRect().height;
+      const cardLeft = Math.max(16, Math.min(left, window.innerWidth - cardWidth - 16));
+      let cardTop = rect.bottom + 24;
+      if (cardTop + cardHeight > window.innerHeight - 16) cardTop = rect.top - cardHeight - 24;
+      card.style.left = cardLeft + 'px';
+      card.style.top = Math.max(16, cardTop) + 'px';
+    }
+
+    function maybeStartSetupTour() {
+      if (setupTourStorage('opencode2api.setupTourCompleted') || setupTourStorage('opencode2api.setupTourDismissed')) return;
+      setTimeout(startSetupTour, 650);
     }
 
     async function boot() {
@@ -500,6 +613,7 @@
         await refreshMonitor();
         monitorTimer = setInterval(refreshMonitor, 3000);
         connectLogs();
+        maybeStartSetupTour();
       } catch (error) {
         showLogin();
       }
@@ -522,6 +636,7 @@
         clearInterval(monitorTimer);
         monitorTimer = setInterval(refreshMonitor, 3000);
         connectLogs();
+        maybeStartSetupTour();
       } catch (error) {
         $('#login-error').textContent = error.message;
       }
@@ -537,6 +652,11 @@
 
     $$('.workspace-nav button').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     $('#setup-open-config').addEventListener('click', () => setPage('config'));
+    $('#setup-start-tour').addEventListener('click', startSetupTour);
+    $('#tour-prev').addEventListener('click', () => { if (tourStepIndex > 0) { tourStepIndex -= 1; showSetupTourStep(); } });
+    $('#tour-next').addEventListener('click', () => { if (tourStepIndex === tourSteps.length - 1) finishSetupTour(true); else { tourStepIndex += 1; showSetupTourStep(); } });
+    $('#tour-skip').addEventListener('click', () => finishSetupTour(false));
+    window.addEventListener('resize', () => { if (!$('#setup-tour').classList.contains('hidden')) positionSetupTour(); });
 
     function setDebugError(message, bad = true) {
       const el = $('#debug-error');
@@ -623,6 +743,7 @@
         const metadataState = metadata.last_error ? (metadata.ready ? '刷新失败，沿用上次记录' : '首次刷新失败') : metadata.ready ? (metadata.stale ? '价格记录已过期，沿用缓存' : '价格记录已更新') : '价格记录等待首次刷新';
         const routing = config ? String(config.prefer || '—').toUpperCase() + ' · anonymous ' + (config.anonymous ? 'on' : 'off') : '—';
         const traceStatus = lastDebugTrace ? lastDebugTrace.status : '—';
+        renderDiagnosticChecks(data);
         $('#diagnostic-cards').innerHTML = '<div class="diagnostic-card"><span class="label">MODEL CATALOG</span><strong>' + (models.exposed || 0) + ' / ' + (models.total || 0) + '</strong><small>可暴露 / 已发现 · ' + esc(refreshed) + '<br>' + esc(metadataState) + '</small></div><div class="diagnostic-card"><span class="label">ROUTING</span><strong>' + esc(routing) + '</strong><small>当前优先级与匿名通道</small></div><div class="diagnostic-card"><span class="label">PROXY / KEY</span><strong>' + healthyProxies + ' / ' + proxies.length + '</strong><small>健康 Proxy · Key ' + keys.length + '，冷却 ' + coolingKeys + '</small></div><div class="diagnostic-card"><span class="label">LAST TRACE</span><strong>' + esc(traceStatus) + '</strong><small>' + (lastDebugTrace ? esc(lastDebugTrace.elapsed_ms + ' ms · ' + lastDebugTrace.model) : '尚未从 Playground 发起请求') + '</small></div>';
         $('#diagnostic-routes').innerHTML = '<div class="diagnostic-list-row"><span>GET /v1/models</span><span>模型目录</span></div><div class="diagnostic-list-row"><span>POST /v1/chat/completions</span><span>Playground</span></div><div class="diagnostic-list-row"><span>POST /v1/responses</span><span>Responses</span></div><div class="diagnostic-list-row"><span>POST /v1/messages</span><span>Anthropic</span></div><div class="diagnostic-list-row"><span>GET /healthz</span><span>无需 API Key</span></div>';
         $('#diagnostic-trace').textContent = lastDebugTrace ? JSON.stringify(lastDebugTrace, null, 2) : '还没有来自 Playground 的请求。';
@@ -635,6 +756,23 @@
       }
     }
 
+    function renderDiagnosticChecks(data) {
+      const resources = data.resources || {};
+      const models = resources.models || {};
+      const metadata = resources.model_metadata || {};
+      const proxies = Array.isArray(resources.proxies) ? resources.proxies : [];
+      const keys = Array.isArray(resources.keys) ? resources.keys : [];
+      const checks = [
+        { label: '本地访问 Key', ready: !!(config && config.server_keys && config.server_keys.length), detail: config && config.server_keys && config.server_keys.length ? '已配置' : '未配置' },
+        { label: '上游通道', ready: !!(config && (config.anonymous || (config.zen_keys && config.zen_keys.length) || (config.go_keys && config.go_keys.length))), detail: config && config.anonymous ? '匿名模式开启' : '等待 Zen/Go Key' },
+        { label: '模型目录', ready: (models.exposed || 0) > 0, detail: (models.exposed || 0) + ' 个可暴露模型' },
+        { label: '价格记录', ready: !!metadata.ready && !metadata.last_error, detail: metadata.last_error ? '刷新失败，使用缓存' : metadata.ready ? (metadata.stale ? '缓存已过期' : '已更新') : '等待首次刷新' },
+        { label: '健康 Proxy', ready: proxies.some(proxy => proxy.healthy), detail: proxies.filter(proxy => proxy.healthy).length + ' / ' + proxies.length + ' 健康' },
+        { label: 'Key 池', ready: !!config && (config.anonymous || keys.length > 0), detail: config && config.anonymous ? '由匿名通道承担' : keys.length + ' 个运行 Key' }
+      ];
+      $('#diagnostic-checks').innerHTML = checks.map(item => '<div class="diagnostic-check ' + (item.ready ? 'ready' : '') + '"><strong>' + (item.ready ? 'READY' : 'CHECK') + '</strong><span>' + item.label + '</span><small>' + item.detail + '</small></div>').join('');
+    }
+
     function renderDiagnosticEvents() {
       const requestID = lastDebugTrace && lastDebugTrace.request_id;
       const candidates = logEvents.filter(item => !requestID || JSON.stringify(item).includes(requestID)).slice(-12);
@@ -643,6 +781,16 @@
         return;
       }
       $('#diagnostic-events').innerHTML = candidates.map(item => '<div class="diagnostic-event"><span class="time">' + new Date(item.time).toLocaleTimeString() + '</span><span class="level ' + (item.level === 'error' ? 'error' : item.level === 'warn' ? 'warn' : '') + '">' + esc(item.level) + '</span><span class="component">' + esc(item.component || 'core') + '</span><span>' + esc(item.message) + ' <span class="component">' + esc(JSON.stringify(item.fields || {})) + '</span></span></div>').join('');
+    }
+
+    function renderDocs() {
+      const base = $('#docs-api-base').value.trim().replace(/\/+$/, '') || 'http://127.0.0.1:8080';
+      const key = '<YOUR_SERVER_KEY>';
+      const model = 'big-pickle';
+      $('#docs-curl-models').textContent = 'curl -sS \\\n  -H "Authorization: Bearer ' + key + '" \\\n  ' + base + '/v1/models';
+      $('#docs-curl-chat').textContent = 'curl -sS \\\n  -H "Authorization: Bearer ' + key + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model":"' + model + '","messages":[{"role":"user","content":"Hi"}],"stream":false}\' \\\n  ' + base + '/v1/chat/completions';
+      $('#docs-python').textContent = 'from openai import OpenAI\n\nclient = OpenAI(\n    base_url="' + base + '/v1",\n    api_key="' + key + '",\n)\n\nresponse = client.chat.completions.create(\n    model="' + model + '",\n    messages=[{"role": "user", "content": "Hi"}],\n)\nprint(response.choices[0].message.content)';
+      $('#docs-javascript').textContent = 'import OpenAI from "openai";\n\nconst client = new OpenAI({\n  baseURL: "' + base + '/v1",\n  apiKey: "' + key + '",\n});\n\nconst response = await client.chat.completions.create({\n  model: "' + model + '",\n  messages: [{ role: "user", content: "Hi" }],\n});\nconsole.log(response.choices[0].message.content);';
     }
 
     function extractDebugText(payload) {
@@ -728,6 +876,17 @@
     $('#debug-clear').addEventListener('click', () => { $('#debug-system').value = ''; $('#debug-prompt').value = ''; setDebugError(''); });
     $('#debug-reset').addEventListener('click', () => { debugHistory = []; lastDebugTrace = null; renderDebugTranscript(); $('#debug-raw').textContent = '{}'; $('#debug-model-used').textContent = 'MODEL —'; $('#debug-route').textContent = 'ROUTE —'; $('#debug-request-id').textContent = 'REQUEST —'; $('#debug-latency').textContent = '未发送'; setDebugError(''); if (!$('#page-debug').classList.contains('hidden')) loadDiagnostics(); });
     $('#debug-prompt').addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); sendDebugMessage(); } });
+    $('#docs-api-base').addEventListener('input', renderDocs);
+    $$('[data-copy-target]').forEach(button => button.addEventListener('click', async () => {
+      const target = $('#' + button.dataset.copyTarget);
+      try {
+        await navigator.clipboard.writeText(target.textContent);
+        toast('示例已复制');
+      } catch (error) {
+        toast('复制失败，请手动选择文本', true);
+      }
+    }));
+    renderDocs();
 
     function renderSetupChecklist() {
       if (!config || !monitorData) return;
