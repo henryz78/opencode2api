@@ -87,6 +87,23 @@ docker compose logs -f
 OPENCODE2API_PORT=18080 OPENCODE2API_WEBUI_PORT=18081 docker compose up -d
 ```
 
+## GitHub Actions 构建镜像
+
+仓库内置 `.github/workflows/docker-image.yml`。每次向 GitHub push 后，GitHub Actions 会构建并发布 Docker 镜像到 GHCR：
+
+```text
+ghcr.io/henryz78/opencode2api
+```
+
+标签规则：
+
+- `main` 分支会更新 `latest`
+- 其他分支会生成对应的分支标签
+- 每次 push 都会生成 `sha-<短提交号>` 标签
+- 推送 Git tag 时会生成同名镜像标签
+
+工作流使用仓库自带的 `GITHUB_TOKEN`，不需要额外配置 Docker Hub 密钥。首次发布后，可在仓库的 **Packages** 中调整镜像的可见性和访问权限。
+
 ## 配置
 
 复制示例配置：
