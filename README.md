@@ -2,12 +2,15 @@
 
 `opencode2api` 是一个使用 Go 编写的 OpenCode Zen / Zen Go 协议代理。它对外提供标准 OpenAI 与 Anthropic API，并自动添加 OpenCode 客户端请求头。
 
+当前功能版本：`v1.2.0` · [版本记录](CHANGELOG.md)
+
 主要功能：
 
 - 支持 OpenAI Chat Completions、Responses 和 Models API
 - 支持 Anthropic Messages API
 - 支持普通响应和 SSE 流式响应
 - 支持文本、图片、thinking/reasoning、工具定义、工具调用和工具结果转换
+- 跨协议请求保留 `user` / `safety_identifier`；仅在上游明确要求终端用户标识时按需补充稳定匿名标识重试，普通请求不会被注入额外字段
 - 分离配置 Zen key 池与 Zen Go key 池
 - 支持无需上游 key 的 Zen 匿名模式，免费模型先走匿名通道，失败后按 `prefer` 顺序回退 Zen/Go key
 - 每 24 小时从 models.dev 更新 OpenCode 成本与弃用信息；已知价格以零成本记录为准，metadata 未就绪或缺少模型时保留名称含 `free` 的兼容回退
@@ -36,6 +39,8 @@
 | `GET` | `/healthz` | 健康检查 |
 
 `/healthz` 无需 API key，返回服务版本以及模型目录、Zen/Go key、匿名开关和代理池的汇总状态，不会暴露 key 或代理地址。模型目录尚未完成首次刷新、已经过期、没有可暴露模型或没有健康代理时返回 HTTP `503`；其余情况返回 `200`。
+
+Railway 单端口部署时，`/healthz`、`/v1/*`、WebUI 和管理 API 共用 Railway 注入的 `PORT`；普通 Docker 部署仍可按配置使用 API `8080` 与 WebUI `8081` 两个端口。
 
 模型目录的过期阈值为 `models.refresh_seconds` 的两倍，且不低于 60 秒。刚启动时短暂返回 `503 starting` 属于正常现象，模型列表首次刷新成功后会变为 `200 ok`。
 
@@ -160,7 +165,7 @@ docker run -d --name opencode2api --restart unless-stopped \
   ghcr.io/henryz78/opencode2api:latest
 ```
 
-普通分支 push 会由 `.github/workflows/docker-image.yml` 构建并发布 `latest`、分支和 SHA 镜像标签；推送 `v*` 版本 tag 时由 `release.yml` 构建 Linux/Windows/macOS 二进制、多架构 GHCR 镜像并创建 GitHub Release。两个工作流分工不同，不会重复写入版本镜像标签。
+普通分支 push 会由 `.github/workflows/docker-image.yml` 构建并发布 `latest`、分支和 SHA 镜像标签；推送 `v*` 版本 tag 时由 `release.yml` 构建 Linux/Windows/macOS 二进制、多架构 GHCR 镜像并创建 GitHub Release。两个工作流分工不同，不会重复写入版本镜像标签。当前功能版本为 `v1.2.0`，正式镜像为 `ghcr.io/henryz78/opencode2api:v1.2.0`。
 
 ## Railway 部署
 
@@ -177,6 +182,8 @@ ghcr.io/henryz78/opencode2api:latest
 ```
 
 镜像会自动识别 Railway 注入的 `PORT`，让 WebUI、Playground 和 `/v1/*` API 共用这个公共端口，并按路径分流。`STATE_DIR`、`CONFIG_PATH` 和端口变量通常不需要额外填写；首次启动会在 Volume 中生成配置，之后通过 WebUI 修改即可。首次登录后请立即修改管理员密码并删除无效示例 Key。
+
+Railway 的 Domain Target Port 必须选择服务实际监听的 `$PORT`。如果面板同时列出 `8080` 和 `8081`，选择 `8080`；新版本不再把 `8081` 作为 Railway 公网 API 端口。部署完成后，同一个域名可同时访问 WebUI 和 `/v1/*` API。
 
 ## 配置
 
@@ -346,6 +353,13 @@ socks5://127.0.0.1:1080  # 备用代理
 所有请求都会经过同一个上游请求准备流程，同协议转发和跨协议转换不再使用两套分支。通过 Chat Completions 或 Anthropic Messages API 调用 DeepSeek、Kimi/Moonshot 或 MiMo 模型时，代理会按上游的目标协议规范化 assistant 工具历史：Chat 补全缺失或空的 `reasoning_content`；Anthropic 保留有效 thinking 文本、为缺失或空的 thinking 补充兼容占位内容、将 `redacted_thinking` 转为普通 thinking，并移除这些兼容端点不接受的 `signature`。显式启用 reasoning/thinking 的别名模型也会启用该处理，普通非 reasoning 请求不会被修改。
 
 跨协议桥接会区分 Chat/Responses 的 system 与 developer 指令，在 Anthropic 目标中按顺序合并为 system 内容；reasoning effort 会转换为兼容 thinking 预算。工具选择、空参数 `{}`、停止原因，以及 SSE 中延迟到达的工具名称、参数分片和完成事件也会转换到目标协议的对应形态。
+
+### 客户端身份与工具调用
+
+- 客户端主动发送 `safety_identifier` 或旧版 `user` 时，Gateway 会保留它；客户端未发送时，只有上游返回明确的终端用户标识错误，Gateway 才会按当前 Server Key 派生匿名标识并重试一次。
+- Responses 模型通常使用 `safety_identifier`，Chat Completions 兼容层使用 `user`；Anthropic 原生请求不会被添加 OpenAI 专用字段。
+- 工具调用优先使用 `tool_choice: "auto"`。部分免费模型不接受指定工具名或 `required`，但仍能接受工具定义；`auto` 只表示允许模型调用，模型也可能选择直接返回文本。
+- 客户端收到 `tool_call` / `function_call` / `tool_use` 后，应执行本地工具并把工具结果作为下一轮请求发回；Gateway 只负责协议转换，不执行客户端工具。
 
 ### `performance`
 
