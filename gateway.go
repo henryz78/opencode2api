@@ -273,6 +273,9 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 			writeAPIError(w, external, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
 			return
 		}
+		if retryResponse, retried := g.retryMissingEndUserIdentifier(requestCtx, route, external, payload, upstreamURL, r, ids, resp); retried {
+			resp = retryResponse
+		}
 		defer resp.Body.Close()
 		w.Header().Set("x-request-id", ids.Request)
 		if resp.StatusCode/100 != 2 {
@@ -329,6 +332,80 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(responseBody)
 	}
+}
+
+// retryMissingEndUserIdentifier keeps clients that do not know about
+// provider-specific safety fields compatible with the small set of upstream
+// routes that require an end-user identifier. Ordinary requests are sent
+// unchanged; this path is entered only after an upstream request explicitly
+// reports the missing identifier.
+func (g *Gateway) retryMissingEndUserIdentifier(ctx context.Context, route modelRoute, external Protocol, payload map[string]any, upstreamURL string, r *http.Request, ids requestIDs, resp *http.Response) (*http.Response, bool) {
+	if route.Protocol != ProtocolResponses && route.Protocol != ProtocolChat {
+		return resp, false
+	}
+	if firstString(stringAt(payload, "safety_identifier"), stringAt(payload, "user")) != "" || !responseRequiresEndUserIdentifier(resp) {
+		return resp, false
+	}
+	fallbackPayload := cloneMap(payload)
+	ensureProviderEndUserIdentifier(r, route.Protocol, fallbackPayload)
+	upstreamPayload, err := prepareUpstreamRequest(external, route.Protocol, fallbackPayload, upstreamURL)
+	if err != nil {
+		return resp, false
+	}
+	encoded, err := json.Marshal(upstreamPayload)
+	if err != nil {
+		return resp, false
+	}
+	retryResponse, retryErr := g.doUpstream(ctx, route, encoded, ids)
+	if retryErr != nil || retryResponse == nil {
+		return resp, false
+	}
+	g.logger.Debug("retrying upstream request with gateway end-user identifier", "component", "conversion", "event", "missing_end_user_identifier_retry", "request_id", ids.Request, "model", route.ID, "protocol", route.Protocol)
+	drainAndClose(resp.Body)
+	return retryResponse, true
+}
+
+func ensureProviderEndUserIdentifier(r *http.Request, target Protocol, input map[string]any) {
+	if firstString(stringAt(input, "safety_identifier"), stringAt(input, "user")) != "" {
+		return
+	}
+	identifier := stableID("safety", "opencode2api:"+requestCredential(r))
+	switch target {
+	case ProtocolResponses:
+		input["safety_identifier"] = identifier
+	case ProtocolChat:
+		input["user"] = identifier
+	}
+}
+
+func responseRequiresEndUserIdentifier(resp *http.Response) bool {
+	if resp == nil || resp.Body == nil || resp.StatusCode < 400 || resp.StatusCode >= 500 {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	message := strings.ToLower(string(body))
+	return (strings.Contains(message, "end-user identifier") || strings.Contains(message, "end user identifier")) && (strings.Contains(message, "safety_identifier") || strings.Contains(message, "user"))
+}
+
+func requestCredential(r *http.Request) string {
+	if r == nil {
+		return "gateway"
+	}
+	if key := strings.TrimSpace(r.Header.Get("x-api-key")); key != "" {
+		return key
+	}
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(authorization) >= len("Bearer ") && strings.EqualFold(authorization[:len("Bearer ")], "Bearer ") {
+		if key := strings.TrimSpace(authorization[len("Bearer "):]); key != "" {
+			return key
+		}
+	}
+	return "gateway"
 }
 
 func (g *Gateway) doUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs) (*http.Response, error) {

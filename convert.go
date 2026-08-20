@@ -63,6 +63,10 @@ type bridgeRequest struct {
 	Stop        any
 	Reasoning   any
 	Metadata    any
+	User        string
+	// SafetyIdentifier is a provider-facing stable end-user identifier used by
+	// Responses models that enforce abuse/safety attribution.
+	SafetyIdentifier string
 }
 
 type bridgeUsage struct {
@@ -274,11 +278,13 @@ func anthropicContentHasType(content []any, kind string) bool {
 
 func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest, error) {
 	request := bridgeRequest{
-		Model:       stringAt(input, "model"),
-		Stream:      boolAt(input, "stream"),
-		Temperature: input["temperature"],
-		TopP:        input["top_p"],
-		Metadata:    input["metadata"],
+		Model:            stringAt(input, "model"),
+		Stream:           boolAt(input, "stream"),
+		Temperature:      input["temperature"],
+		TopP:             input["top_p"],
+		Metadata:         input["metadata"],
+		User:             stringAt(input, "user"),
+		SafetyIdentifier: stringAt(input, "safety_identifier"),
 	}
 	switch protocol {
 	case ProtocolChat:
@@ -478,6 +484,13 @@ func encodeChatRequest(request bridgeRequest) (map[string]any, error) {
 	put(output, "top_p", request.TopP)
 	put(output, "max_tokens", request.MaxTokens)
 	put(output, "stop", request.Stop)
+	user := request.User
+	if user == "" {
+		user = request.SafetyIdentifier
+	}
+	if user != "" {
+		output["user"] = user
+	}
 	if effort := reasoningEffort(request.Reasoning); effort != nil {
 		output["reasoning_effort"] = effort
 	}
@@ -655,6 +668,12 @@ func encodeResponsesRequest(request bridgeRequest) map[string]any {
 	put(output, "max_output_tokens", request.MaxTokens)
 	put(output, "stop", request.Stop)
 	put(output, "metadata", request.Metadata)
+	if request.User != "" {
+		output["user"] = request.User
+	}
+	if request.SafetyIdentifier != "" {
+		output["safety_identifier"] = request.SafetyIdentifier
+	}
 	if len(request.System) > 0 {
 		output["instructions"] = bridgeBlocksText(request.System)
 	}
