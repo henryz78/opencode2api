@@ -40,6 +40,6 @@ WORKDIR /app
 EXPOSE 8080 8081
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD sh -c 'health_port=8080; if [ "${PORT:-}" = "8080" ]; then health_port=8081; fi; wget -q -O /dev/null "http://127.0.0.1:$health_port/healthz" || exit 1'
+    CMD sh -c 'wget -q -O /dev/null "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1'
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]

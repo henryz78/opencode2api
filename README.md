@@ -176,7 +176,7 @@ ghcr.io/henryz78/opencode2api:latest
 /var/lib/opencode2api
 ```
 
-镜像会自动识别 Railway 注入的 `PORT`，让 WebUI/Playground 监听该公共端口，同时把 API 保持在容器内部端口。`STATE_DIR`、`CONFIG_PATH` 和端口变量通常不需要额外填写；首次启动会在 Volume 中生成配置，之后通过 WebUI 修改即可。首次登录后请立即修改管理员密码并删除无效示例 Key。
+镜像会自动识别 Railway 注入的 `PORT`，让 WebUI、Playground 和 `/v1/*` API 共用这个公共端口，并按路径分流。`STATE_DIR`、`CONFIG_PATH` 和端口变量通常不需要额外填写；首次启动会在 Volume 中生成配置，之后通过 WebUI 修改即可。首次登录后请立即修改管理员密码并删除无效示例 Key。
 
 ## 配置
 

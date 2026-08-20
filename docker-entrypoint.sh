@@ -7,16 +7,13 @@ config_seed_path=${CONFIG_SEED_PATH:-}
 binary_path=${BINARY_PATH:-/usr/local/bin/opencode2api}
 railway_port=${PORT:-}
 
-# Railway exposes one public port. Keep the API on a private container port
-# and expose the WebUI/Playground on Railway's injected PORT. For ordinary
-# Docker usage, the explicit listen variables retain their usual meaning.
+# Railway exposes one public port. Run the API and WebUI on that same port;
+# the binary dispatches /v1/* and /healthz to the API and everything else to
+# the WebUI. For ordinary Docker usage, the explicit listen variables retain
+# their usual meaning.
 if [ -n "$railway_port" ]; then
-    api_port=8080
-    if [ "$railway_port" = "8080" ]; then
-        api_port=8081
-    fi
-    listen_address="127.0.0.1:$api_port"
-    webui_listen_address="0.0.0.0:$railway_port"
+    listen_address="0.0.0.0:$railway_port"
+    webui_listen_address="$listen_address"
 else
     listen_address=${LISTEN_ADDRESS:-0.0.0.0:8080}
     webui_listen_address=${WEBUI_LISTEN_ADDRESS:-0.0.0.0:8081}

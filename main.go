@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -51,15 +52,20 @@ func main() {
 		Addr: cfg.Listen, Handler: manager.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
 	}
 	servers := []*http.Server{apiServer}
-	go serveHTTP(cancel, logger, apiServer, "api")
-
-	if cfg.WebUI.Enabled {
+	if cfg.WebUI.Enabled && sameListenAddress(cfg.Listen, cfg.WebUI.Listen) {
 		admin := NewAdminServer(manager, monitor, hub, logger)
-		webServer := &http.Server{
-			Addr: cfg.WebUI.Listen, Handler: admin.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
+		apiServer.Handler = combinedHTTPHandler(apiServer.Handler, admin.Handler())
+		go serveHTTP(cancel, logger, apiServer, "api+webui")
+	} else {
+		go serveHTTP(cancel, logger, apiServer, "api")
+		if cfg.WebUI.Enabled {
+			admin := NewAdminServer(manager, monitor, hub, logger)
+			webServer := &http.Server{
+				Addr: cfg.WebUI.Listen, Handler: admin.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
+			}
+			servers = append(servers, webServer)
+			go serveHTTP(cancel, logger, webServer, "webui")
 		}
-		servers = append(servers, webServer)
-		go serveHTTP(cancel, logger, webServer, "webui")
 	}
 
 	<-ctx.Done()
@@ -70,6 +76,20 @@ func main() {
 			logger.Error("graceful shutdown failed", "component", "server", "event", "shutdown_failed", "address", server.Addr, "error", err)
 		}
 	}
+}
+
+func sameListenAddress(left, right string) bool {
+	return strings.TrimSpace(left) != "" && strings.TrimSpace(left) == strings.TrimSpace(right)
+}
+
+func combinedHTTPHandler(api, webui http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/v1" || strings.HasPrefix(r.URL.Path, "/v1/") {
+			api.ServeHTTP(w, r)
+			return
+		}
+		webui.ServeHTTP(w, r)
+	})
 }
 
 func serveHTTP(cancel context.CancelFunc, logger *slog.Logger, server *http.Server, component string) {
