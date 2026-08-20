@@ -33,7 +33,6 @@ type Gateway struct {
 	goNodes    *nodePool
 	anonymous  *anonymousPool
 	catalog    *modelCatalog
-	metadata   *modelMetadataCatalog
 	monitor    *Monitor
 }
 
@@ -70,36 +69,7 @@ type healthProxies struct {
 	Unhealthy int `json:"unhealthy"`
 }
 
-type DebugModel struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name,omitempty"`
-	Access        string  `json:"access"`
-	Tier          string  `json:"tier,omitempty"`
-	Protocol      string  `json:"protocol,omitempty"`
-	Free          bool    `json:"free"`
-	MetadataKnown bool    `json:"metadata_known"`
-	Status        string  `json:"status,omitempty"`
-	CostInput     float64 `json:"cost_input,omitempty"`
-	CostOutput    float64 `json:"cost_output,omitempty"`
-}
-
-type DebugModelsResponse struct {
-	Object        string                `json:"object"`
-	Data          []DebugModel          `json:"data"`
-	Metadata      modelMetadataSnapshot `json:"metadata"`
-	AnonymousOnly bool                  `json:"anonymous_only"`
-}
-
-type DebugRouteInfo struct {
-	Tier          string `json:"tier,omitempty"`
-	Protocol      string `json:"protocol,omitempty"`
-	Anonymous     bool   `json:"anonymous"`
-	Free          bool   `json:"free"`
-	MetadataKnown bool   `json:"metadata_known"`
-	MetadataReady bool   `json:"metadata_ready"`
-}
-
-func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor, metadata *modelMetadataCatalog) (*Gateway, error) {
+func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor) (*Gateway, error) {
 	transports, err := newTransportPool(cfg.RuntimeProxies(), cfg.Performance, time.Duration(cfg.Retry.TimeoutSeconds)*time.Second)
 	if err != nil {
 		return nil, err
@@ -113,8 +83,6 @@ func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor, metadata *mod
 	if err != nil {
 		return nil, fmt.Errorf("go node pool: %w", err)
 	}
-	catalog := newModelCatalog(cfg.Prefer, cfg.Models.Protocols)
-	catalog.metadata = metadata
 	return &Gateway{
 		cfg:        cfg,
 		logger:     logger,
@@ -122,8 +90,7 @@ func NewGateway(cfg Config, logger *slog.Logger, monitor *Monitor, metadata *mod
 		zenNodes:   zenNodes,
 		goNodes:    goNodes,
 		anonymous:  newAnonymousPool(cfg.Anonymous, transports, cooldown),
-		catalog:    catalog,
-		metadata:   metadata,
+		catalog:    newModelCatalog(cfg.Prefer, cfg.Models.Protocols),
 		monitor:    monitor,
 	}, nil
 }
@@ -229,88 +196,17 @@ func (g *Gateway) authenticate(next http.HandlerFunc) http.HandlerFunc {
 func (g *Gateway) handleModels(w http.ResponseWriter, _ *http.Request) {
 	now := time.Now().Unix()
 	models := g.catalog.List()
-	metadataReady := g.metadata != nil && g.metadata.Snapshot().Ready
-	anonymousOnly := g.cfg.Anonymous && len(g.cfg.ZenKeys) == 0 && len(g.cfg.GoKeys) == 0
 	data := make([]map[string]any, 0, len(models))
 	for _, model := range models {
 		if !supportedModel(model) {
 			continue
 		}
-		if anonymousOnly && metadataReady && !g.catalog.anonymousEligible(model) {
+		if g.cfg.Anonymous && len(g.cfg.ZenKeys) == 0 && len(g.cfg.GoKeys) == 0 && !g.catalog.anonymousDecision(model).Allowed {
 			continue
 		}
 		data = append(data, map[string]any{"id": model, "object": "model", "created": now, "owned_by": "opencode"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
-}
-
-func (g *Gateway) DebugModels() DebugModelsResponse {
-	metadata := modelMetadataSnapshot{}
-	if g.metadata != nil {
-		metadata = g.metadata.Snapshot()
-	}
-	anonymousOnly := g.cfg.Anonymous && len(g.cfg.ZenKeys) == 0 && len(g.cfg.GoKeys) == 0
-	models := make([]DebugModel, 0)
-	for _, model := range g.catalog.List() {
-		if !supportedModel(model) {
-			continue
-		}
-		if anonymousOnly && metadata.Ready && !g.catalog.anonymousEligible(model) {
-			continue
-		}
-		entry, metadataEntryKnown := modelMetadataEntry{}, false
-		if g.metadata != nil {
-			entry, metadataEntryKnown = g.metadata.Lookup(model)
-		}
-		route, routeErr := g.DebugRoute(model)
-		access := "unknown"
-		if routeErr != nil {
-			access = "unavailable"
-		} else if route.Anonymous {
-			access = "anonymous"
-		} else {
-			access = "key"
-		}
-		name := entry.Name
-		if name == "" {
-			name = model
-		}
-		models = append(models, DebugModel{
-			ID:            model,
-			Name:          name,
-			Access:        access,
-			Tier:          route.Tier,
-			Protocol:      route.Protocol,
-			Free:          metadataEntryKnown && entry.Free,
-			MetadataKnown: metadataEntryKnown && entry.KnownCost,
-			Status:        entry.Status,
-			CostInput:     entry.CostInput,
-			CostOutput:    entry.CostOutput,
-		})
-	}
-	return DebugModelsResponse{Object: "list", Data: models, Metadata: metadata, AnonymousOnly: anonymousOnly}
-}
-
-func (g *Gateway) DebugRoute(model string) (DebugRouteInfo, error) {
-	metadataReady := false
-	metadataKnown := false
-	free := false
-	if g.metadata != nil {
-		metadata := g.metadata.Snapshot()
-		metadataReady = metadata.Ready
-		if entry, ok := g.metadata.Lookup(model); ok {
-			metadataKnown = entry.KnownCost
-			free = entry.Free
-		}
-	}
-	if g.metadata == nil {
-		free = isFreeModel(model)
-	}
-	route, err := g.catalog.Route(model, len(g.cfg.ZenKeys) > 0, len(g.cfg.GoKeys) > 0, g.cfg.Anonymous)
-	if err != nil {
-		return DebugRouteInfo{Free: free, MetadataKnown: metadataKnown, MetadataReady: metadataReady}, err
-	}
-	return DebugRouteInfo{Tier: string(route.Tier), Protocol: string(route.Protocol), Anonymous: route.Anonymous, Free: free, MetadataKnown: metadataKnown, MetadataReady: metadataReady}, nil
 }
 
 func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
@@ -369,7 +265,11 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 		defer cancel()
 		resp, err := g.doUpstream(requestCtx, route, encoded, ids)
 		if err != nil {
-			g.logger.Warn("all upstream attempts failed", "component", "upstream", "event", "request_failed", "request_id", ids.Request, "tier", route.Tier, "error", err)
+			finalTier := route.Tier
+			if meta != nil && meta.Tier != "" {
+				finalTier = Tier(meta.Tier)
+			}
+			g.logger.Warn("all upstream attempts failed", "component", "upstream", "event", "request_failed", "request_id", ids.Request, "tier", finalTier, "error", err)
 			writeAPIError(w, external, http.StatusBadGateway, "all upstream attempts failed", "upstream_error", ids.Request)
 			return
 		}
@@ -391,10 +291,18 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("X-Accel-Buffering", "no")
 			w.WriteHeader(resp.StatusCode)
+			var usage bridgeUsage
+			var usageReported bool
 			if external == route.Protocol {
-				_, err = io.Copy(w, resp.Body)
+				observer := newStreamUsageObserver(route.Protocol)
+				_, err = io.Copy(w, io.TeeReader(resp.Body, observer))
+				usage = observer.Finish()
+				usageReported = observer.Reported()
 			} else {
-				err = transcodeStream(w, resp.Body, route.Protocol, external, model)
+				usage, usageReported, err = transcodeStreamWithUsage(w, resp.Body, route.Protocol, external, model)
+			}
+			if meta != nil {
+				meta.Usage, meta.UsageReported = usage, usageReported
 			}
 			if err != nil && !errors.Is(err, context.Canceled) {
 				g.logger.Debug("downstream stream ended with an error", "component", "stream", "event", "stream_failed", "request_id", ids.Request, "model", model, "tier", route.Tier, "error", err)
@@ -405,6 +313,9 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 		if err != nil {
 			writeAPIError(w, external, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
 			return
+		}
+		if usage, reported := extractResponseUsage(route.Protocol, responseBody); meta != nil {
+			meta.Usage, meta.UsageReported = usage, reported
 		}
 		if external != route.Protocol {
 			responseBody, err = convertResponse(route.Protocol, external, responseBody)
@@ -421,28 +332,58 @@ func (g *Gateway) handleInference(external Protocol) http.HandlerFunc {
 }
 
 func (g *Gateway) doUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs) (*http.Response, error) {
-	if !route.Anonymous {
-		return g.doKeyUpstream(ctx, route, body, ids, 0)
+	var lastResponse *http.Response
+	var lastErr error
+	attempts := 0
+	if route.Anonymous {
+		resp, err, used := g.doAnonymousUpstream(ctx, route, body, ids)
+		attempts += used
+		if err == nil && resp != nil && resp.StatusCode/100 == 2 {
+			return resp, nil
+		}
+		lastResponse, lastErr = resp, err
+		if len(route.KeyTiers) > 0 {
+			g.logger.Debug("anonymous request did not succeed; entering preferred key tiers", "component", "upstream", "event", "anonymous_fallback", "request_id", ids.Request, "attempts", attempts, "key_tiers", route.KeyTiers)
+		}
 	}
-	resp, err, attempts, exhausted := g.doAnonymousUpstream(ctx, route, body, ids)
-	if !exhausted || g.zenNodes.Len() == 0 {
-		return resp, err
+
+	keyTiers := route.KeyTiers
+	if !route.Anonymous && len(keyTiers) == 0 && (route.Tier == TierZen || route.Tier == TierGo) {
+		keyTiers = []Tier{route.Tier}
 	}
-	if resp != nil {
-		drainAndClose(resp.Body)
+	for _, tier := range keyTiers {
+		if lastResponse != nil {
+			drainAndClose(lastResponse.Body)
+			lastResponse = nil
+		}
+		keyRoute := route
+		keyRoute.Tier = tier
+		keyRoute.Anonymous = false
+		resp, err, used := g.doKeyUpstream(ctx, keyRoute, body, ids, attempts)
+		attempts += used
+		if err == nil && resp != nil && resp.StatusCode/100 == 2 {
+			return resp, nil
+		}
+		lastResponse, lastErr = resp, err
 	}
-	route.Anonymous = false
-	g.logger.Debug("anonymous attempts exhausted; falling back to Zen keys", "component", "upstream", "event", "anonymous_fallback", "request_id", ids.Request, "attempts", attempts)
-	return g.doKeyUpstream(ctx, route, body, ids, attempts)
+	if lastResponse != nil {
+		return lastResponse, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no usable upstream route")
+	}
+	return nil, lastErr
 }
 
-// doAnonymousUpstream tries each selected proxy at most once. Its retry budget
-// is independent from the authenticated Zen-key phase that may follow it.
-func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs) (*http.Response, error, int, bool) {
+// doAnonymousUpstream tries every currently available proxy at most once. Any
+// failure, including an HTTP error response, advances to the next proxy. Only a
+// successful response ends the anonymous phase; exhausting the proxy cursor
+// returns control to the preferred authenticated tiers.
+func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs) (*http.Response, error, int) {
 	var lastResponse *http.Response
 	var lastErr error
 	cursor := g.anonymous.CursorFor(ids.Session)
-	limit := min(g.cfg.Retry.MaxAttempts, g.anonymous.Len())
+	limit := g.anonymous.Len()
 	attempts := 0
 	for attempts < limit {
 		node := cursor.Next()
@@ -452,6 +393,7 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, bod
 		attempts++
 		if meta, _ := ctx.Value(requestMetaKey{}).(*requestMeta); meta != nil {
 			meta.Attempts = attempts
+			meta.Tier = string(TierZen)
 		}
 		if lastResponse != nil {
 			drainAndClose(lastResponse.Body)
@@ -459,7 +401,7 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, bod
 		}
 		req, err := newUpstreamRequest(ctx, g.cfg.Upstream.Zen, route.Protocol, body, ids, anonymousZenKey)
 		if err != nil {
-			return nil, err, attempts, false
+			return nil, err, attempts
 		}
 		started := time.Now()
 		resp, err := node.proxy.client.Do(req)
@@ -469,15 +411,11 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, bod
 			status = resp.StatusCode
 		}
 		g.syncProxyResult(ctx, node.proxy, status, err)
+		g.recordUpstreamAttempt(route, ids, attempts, "anonymous", "anonymous", true, node.proxy, resp, err, duration)
 		if err == nil && resp.StatusCode/100 == 2 {
 			g.anonymous.MarkSuccess(node)
 			g.logger.Debug("anonymous upstream accepted request", "component", "upstream", "event", "anonymous_attempt_succeeded", "request_id", ids.Request, "attempt", attempts, "tier", TierZen, "proxy", redactURL(node.proxy.name), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
-			return resp, nil, attempts, false
-		}
-		if isNonRetryableClientResponse(resp, err) {
-			g.anonymous.MarkSuccess(node)
-			g.logger.Debug("anonymous upstream rejected a non-retryable request", "component", "upstream", "event", "anonymous_attempt_rejected", "request_id", ids.Request, "attempt", attempts, "tier", TierZen, "proxy", redactURL(node.proxy.name), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
-			return resp, nil, attempts, false
+			return resp, nil, attempts
 		}
 		g.anonymous.MarkFailure(node, resp, err)
 		lastResponse = resp
@@ -485,19 +423,19 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route modelRoute, bod
 		if err != nil {
 			g.logger.Debug("anonymous transport attempt failed", "component", "upstream", "event", "anonymous_attempt_transport_failed", "request_id", ids.Request, "attempt", attempts, "tier", TierZen, "proxy", redactURL(node.proxy.name), "duration_ms", duration.Milliseconds(), "error", err)
 		} else {
-			g.logger.Debug("anonymous upstream returned a retryable response", "component", "upstream", "event", "anonymous_attempt_retryable_response", "request_id", ids.Request, "attempt", attempts, "tier", TierZen, "proxy", redactURL(node.proxy.name), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
+			g.logger.Debug("anonymous upstream returned an error response; trying the next proxy", "component", "upstream", "event", "anonymous_attempt_response_failed", "request_id", ids.Request, "attempt", attempts, "tier", TierZen, "proxy", redactURL(node.proxy.name), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
 		}
 	}
 	if lastResponse != nil {
-		return lastResponse, nil, attempts, true
+		return lastResponse, nil, attempts
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no healthy anonymous proxies available")
 	}
-	return nil, lastErr, attempts, true
+	return nil, lastErr, attempts
 }
 
-func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs, attemptOffset int) (*http.Response, error) {
+func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []byte, ids requestIDs, attemptOffset int) (*http.Response, error, int) {
 	var lastResponse *http.Response
 	var lastErr error
 	nodes := g.zenNodes
@@ -508,17 +446,20 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []by
 	}
 	cursor := nodes.CursorFor(ids.Session)
 	if nodes.Len() == 0 {
-		return nil, fmt.Errorf("no %s nodes configured", route.Tier)
+		return nil, fmt.Errorf("no %s nodes configured", route.Tier), 0
 	}
-	for attempt := 1; attempt <= g.cfg.Retry.MaxAttempts; attempt++ {
-		// Attempts are exposed only as aggregate request metadata and never
-		// include the selected credential.
-		if meta, _ := ctx.Value(requestMetaKey{}).(*requestMeta); meta != nil {
-			meta.Attempts = attemptOffset + attempt
-		}
+	attempts := 0
+	for attempts < g.cfg.Retry.MaxAttempts {
 		node := cursor.Next()
 		if node == nil {
 			break
+		}
+		attempts++
+		// Attempts are exposed only as aggregate request metadata and never
+		// include the selected credential.
+		if meta, _ := ctx.Value(requestMetaKey{}).(*requestMeta); meta != nil {
+			meta.Attempts = attemptOffset + attempts
+			meta.Tier = string(route.Tier)
 		}
 		if lastResponse != nil {
 			drainAndClose(lastResponse.Body)
@@ -526,7 +467,7 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []by
 		}
 		req, err := newUpstreamRequest(ctx, baseURL, route.Protocol, body, ids, node.key)
 		if err != nil {
-			return nil, err
+			return nil, err, attempts
 		}
 		proxy := nodes.Proxy(node)
 		if proxy == nil {
@@ -541,18 +482,20 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []by
 			status = resp.StatusCode
 		}
 		proxyFailed := g.syncProxyResult(ctx, proxy, status, err)
+		g.recordUpstreamAttempt(route, ids, attemptOffset+attempts, secretFingerprint(node.key), "key", false, proxy, resp, err, attemptDuration)
 		if err == nil && resp.StatusCode/100 == 2 {
 			nodes.MarkSuccess(node)
-			g.logger.Debug("upstream accepted request", "component", "upstream", "event", "attempt_succeeded", "request_id", ids.Request, "attempt", attempt, "tier", route.Tier, "key_id", secretFingerprint(node.key), "proxy", redactURL(proxy.name), "status", resp.StatusCode, "duration_ms", attemptDuration.Milliseconds())
-			return resp, nil
+			g.logger.Debug("upstream accepted request", "component", "upstream", "event", "attempt_succeeded", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", secretFingerprint(node.key), "proxy", redactURL(proxy.name), "status", resp.StatusCode, "duration_ms", attemptDuration.Milliseconds())
+			return resp, nil, attempts
 		}
-		// Request-shape errors are deterministic and must be returned to the
-		// caller without rotating through unrelated keys. Authentication,
-		// throttling, server, and transport failures remain retryable.
+		// Request-shape errors are deterministic and must leave this tier without
+		// rotating through unrelated keys. The outer route may still try the next
+		// tier in prefer order. Authentication, throttling, server, and transport
+		// failures remain retryable inside this tier.
 		if isNonRetryableClientResponse(resp, err) {
 			nodes.MarkSuccess(node)
-			g.logger.Debug("upstream rejected a non-retryable request", "component", "upstream", "event", "attempt_rejected", "request_id", ids.Request, "attempt", attempt, "tier", route.Tier, "key_id", secretFingerprint(node.key), "status", resp.StatusCode, "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
-			return resp, nil
+			g.logger.Debug("upstream rejected a non-retryable request", "component", "upstream", "event", "attempt_rejected", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", secretFingerprint(node.key), "status", resp.StatusCode, "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
+			return resp, nil, attempts
 		}
 		if proxyFailed {
 			if nodes.Proxy(node) == proxy {
@@ -564,15 +507,58 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route modelRoute, body []by
 		lastResponse = resp
 		lastErr = err
 		if err != nil {
-			g.logger.Debug("upstream transport attempt failed", "component", "upstream", "event", "attempt_transport_failed", "request_id", ids.Request, "attempt", attempt, "tier", route.Tier, "key_id", secretFingerprint(node.key), "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds(), "error", err)
+			g.logger.Debug("upstream transport attempt failed", "component", "upstream", "event", "attempt_transport_failed", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", secretFingerprint(node.key), "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds(), "error", err)
 		} else {
-			g.logger.Debug("upstream returned a retryable response", "component", "upstream", "event", "attempt_retryable_response", "request_id", ids.Request, "attempt", attempt, "tier", route.Tier, "key_id", secretFingerprint(node.key), "status", resp.StatusCode, "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
+			g.logger.Debug("upstream returned a retryable response", "component", "upstream", "event", "attempt_retryable_response", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", secretFingerprint(node.key), "status", resp.StatusCode, "proxy", redactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
 		}
 	}
 	if lastResponse != nil {
-		return lastResponse, nil
+		return lastResponse, nil, attempts
 	}
-	return nil, lastErr
+	return nil, lastErr, attempts
+}
+
+func extractResponseUsage(protocol Protocol, body []byte) (bridgeUsage, bool) {
+	var payload map[string]any
+	if json.Unmarshal(body, &payload) != nil {
+		return bridgeUsage{}, false
+	}
+	usage := mapAt(payload, "usage")
+	if len(usage) == 0 {
+		return bridgeUsage{}, false
+	}
+	if protocol == ProtocolAnthropic {
+		return decodeAnthropicUsage(usage), true
+	}
+	return decodeOpenAIUsage(usage), true
+}
+
+func (g *Gateway) recordUpstreamAttempt(route modelRoute, ids requestIDs, attempt int, keyID, channel string, anonymous bool, proxy *proxyTransport, resp *http.Response, err error, duration time.Duration) {
+	if g.monitor == nil {
+		return
+	}
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	success := err == nil && status >= 200 && status < 300
+	outcome := "retryable_failure"
+	if success {
+		outcome = "success"
+	} else if err != nil {
+		outcome = "transport_error"
+	} else if isNonRetryableClientResponse(resp, nil) {
+		outcome = "rejected"
+	}
+	proxyName := "unavailable"
+	if proxy != nil {
+		proxyName = redactURL(proxy.name)
+	}
+	g.monitor.RecordAttempt(UpstreamAttempt{
+		Time: time.Now().UTC(), RequestID: ids.Request, Model: route.ID, Tier: string(route.Tier), Attempt: attempt,
+		KeyID: keyID, Channel: channel, Anonymous: anonymous, Proxy: proxyName, Status: status,
+		DurationMS: max(duration.Milliseconds(), 0), Success: success, Outcome: outcome,
+	})
 }
 
 func newUpstreamRequest(ctx context.Context, baseURL string, protocol Protocol, body []byte, ids requestIDs, key string) (*http.Request, error) {
@@ -766,7 +752,7 @@ func (g *Gateway) refreshZen(ctx context.Context) []string {
 
 func (g *Gateway) refreshAnonymousTier(ctx context.Context, base string) []string {
 	cursor := g.anonymous.CursorFor("")
-	limit := min(g.cfg.Retry.MaxAttempts, g.anonymous.Len())
+	limit := g.anonymous.Len()
 	for attempt := 1; attempt <= limit; attempt++ {
 		node := cursor.Next()
 		if node == nil {

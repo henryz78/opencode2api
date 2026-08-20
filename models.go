@@ -6,233 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
-
-const (
-	modelMetadataURL             = "https://models.dev/api.json"
-	modelMetadataRefreshInterval = 24 * time.Hour
-	modelMetadataRequestTimeout  = 30 * time.Second
-)
-
-type modelsDevResponse map[string]modelsDevProvider
-
-type modelsDevProvider struct {
-	Models map[string]modelsDevModel `json:"models"`
-}
-
-type modelsDevModel struct {
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-	Status string         `json:"status"`
-	Cost   *modelsDevCost `json:"cost"`
-}
-
-type modelsDevCost struct {
-	Input  *float64 `json:"input"`
-	Output *float64 `json:"output"`
-}
-
-type modelMetadataEntry struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name,omitempty"`
-	Status     string  `json:"status,omitempty"`
-	KnownCost  bool    `json:"known_cost"`
-	Free       bool    `json:"free"`
-	CostInput  float64 `json:"cost_input,omitempty"`
-	CostOutput float64 `json:"cost_output,omitempty"`
-}
-
-type modelMetadataCache struct {
-	UpdatedAt time.Time                     `json:"updated_at"`
-	Models    map[string]modelMetadataEntry `json:"models"`
-}
-
-type modelMetadataSnapshot struct {
-	Ready     bool      `json:"ready"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
-	Stale     bool      `json:"stale"`
-	Models    int       `json:"models"`
-	LastError string    `json:"last_error,omitempty"`
-}
-
-type modelMetadataCatalog struct {
-	mu        sync.RWMutex
-	cachePath string
-	models    map[string]modelMetadataEntry
-	updatedAt time.Time
-	lastError string
-}
-
-func newModelMetadataCatalog(cachePath string) *modelMetadataCatalog {
-	catalog := &modelMetadataCatalog{cachePath: cachePath, models: make(map[string]modelMetadataEntry)}
-	if cachePath == "" {
-		return catalog
-	}
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		return catalog
-	}
-	var cache modelMetadataCache
-	if err := json.Unmarshal(data, &cache); err != nil || cache.Models == nil {
-		return catalog
-	}
-	catalog.models = cache.Models
-	catalog.updatedAt = cache.UpdatedAt
-	return catalog
-}
-
-func (c *modelMetadataCatalog) Start(ctx context.Context, logger *slog.Logger) {
-	go func() {
-		refresh := func() {
-			if err := c.refresh(ctx); err != nil {
-				c.mu.Lock()
-				c.lastError = err.Error()
-				c.mu.Unlock()
-				logger.Warn("model metadata refresh failed", "component", "models", "event", "metadata_refresh_failed", "error", err)
-				return
-			}
-			logger.Info("model metadata refreshed", "component", "models", "event", "metadata_refreshed", "models", c.count())
-		}
-		if c.isStale() {
-			refresh()
-		}
-		ticker := time.NewTicker(modelMetadataRefreshInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refresh()
-			}
-		}
-	}()
-}
-
-func (c *modelMetadataCatalog) refresh(ctx context.Context) error {
-	requestCtx, cancel := context.WithTimeout(ctx, modelMetadataRequestTimeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, modelMetadataURL, nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: modelMetadataRequestTimeout}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		return fmt.Errorf("models.dev returned HTTP %d", response.StatusCode)
-	}
-	var remote modelsDevResponse
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<20))
-	if err := decoder.Decode(&remote); err != nil {
-		return err
-	}
-	provider, ok := remote["opencode"]
-	if !ok || len(provider.Models) == 0 {
-		return errors.New("models.dev response has no opencode models")
-	}
-	next := make(map[string]modelMetadataEntry, len(provider.Models))
-	for key, model := range provider.Models {
-		id := model.ID
-		if id == "" {
-			id = key
-		}
-		normalized := normalizeModelID(id)
-		if normalized == "" {
-			continue
-		}
-		entry := modelMetadataEntry{ID: id, Name: model.Name, Status: model.Status}
-		if model.Cost != nil && model.Cost.Input != nil && model.Cost.Output != nil {
-			entry.KnownCost = true
-			entry.CostInput = *model.Cost.Input
-			entry.CostOutput = *model.Cost.Output
-			entry.Free = entry.Status != "deprecated" && entry.CostInput == 0 && entry.CostOutput == 0
-		}
-		next[normalized] = entry
-	}
-	if len(next) == 0 {
-		return errors.New("models.dev response has no usable opencode model entries")
-	}
-	updatedAt := time.Now().UTC()
-	cache := modelMetadataCache{UpdatedAt: updatedAt, Models: next}
-	c.mu.Lock()
-	c.models = next
-	c.updatedAt = updatedAt
-	c.lastError = ""
-	c.mu.Unlock()
-	if c.cachePath != "" {
-		data, err := json.MarshalIndent(cache, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encode model metadata cache: %w", err)
-		}
-		if err := os.WriteFile(c.cachePath, data, 0600); err != nil {
-			c.mu.Lock()
-			c.lastError = err.Error()
-			c.mu.Unlock()
-			return fmt.Errorf("write model metadata cache: %w", err)
-		}
-	}
-	return nil
-}
-
-func (c *modelMetadataCatalog) Lookup(model string) (modelMetadataEntry, bool) {
-	c.mu.RLock()
-	entry, ok := c.models[normalizeModelID(model)]
-	c.mu.RUnlock()
-	return entry, ok
-}
-
-func (c *modelMetadataCatalog) IsFree(model string) bool {
-	if entry, ok := c.Lookup(model); ok {
-		return entry.KnownCost && entry.Free
-	}
-	return false
-}
-
-func (c *modelMetadataCatalog) Snapshot() modelMetadataSnapshot {
-	c.mu.RLock()
-	updatedAt, count, lastError := c.updatedAt, len(c.models), c.lastError
-	c.mu.RUnlock()
-	return modelMetadataSnapshot{
-		Ready:     !updatedAt.IsZero(),
-		UpdatedAt: updatedAt,
-		Stale:     updatedAt.IsZero() || time.Since(updatedAt) >= modelMetadataRefreshInterval,
-		Models:    count,
-		LastError: lastError,
-	}
-}
-
-func (c *modelMetadataCatalog) isStale() bool {
-	c.mu.RLock()
-	updatedAt := c.updatedAt
-	c.mu.RUnlock()
-	return updatedAt.IsZero() || time.Since(updatedAt) >= modelMetadataRefreshInterval
-}
-
-func (c *modelMetadataCatalog) count() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.models)
-}
-
-func normalizeModelID(model string) string {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	if slash := strings.LastIndex(normalized, "/"); slash >= 0 {
-		normalized = normalized[slash+1:]
-	}
-	return normalized
-}
 
 type Protocol string
 
@@ -258,6 +37,24 @@ type modelRoute struct {
 	Tier      Tier
 	Protocol  Protocol
 	Anonymous bool
+	// KeyTiers is the ordered authenticated fallback plan. Anonymous requests
+	// always start on Zen, then enter this list when the public credential does
+	// not succeed.
+	KeyTiers []Tier
+}
+
+type ModelRouteDiagnostic struct {
+	Model                string            `json:"model"`
+	RequestedProtocol    Protocol          `json:"requested_protocol,omitempty"`
+	NativeProtocol       Protocol          `json:"native_protocol"`
+	ProtocolSource       string            `json:"protocol_source"`
+	AvailableZen         bool              `json:"available_zen"`
+	AvailableGo          bool              `json:"available_go"`
+	Tier                 Tier              `json:"tier,omitempty"`
+	Anonymous            bool              `json:"anonymous"`
+	KeyTiers             []Tier            `json:"key_tiers,omitempty"`
+	AnonymousEligibility AnonymousDecision `json:"anonymous_eligibility"`
+	RouteError           string            `json:"route_error,omitempty"`
 }
 
 type modelCatalog struct {
@@ -265,9 +62,9 @@ type modelCatalog struct {
 	zen       map[string]bool
 	goModels  map[string]bool
 	protocols map[string]Protocol
-	metadata  *modelMetadataCatalog
 	updatedAt time.Time
 	prefer    Tier
+	metadata  *modelMetadataStore
 }
 
 type modelCatalogSnapshot struct {
@@ -325,46 +122,82 @@ func (c *modelCatalog) Route(model string, hasZenKeys, hasGoKeys, hasAnonymous b
 	if protocol == "" {
 		protocol = inferProtocol(model)
 	}
-	// OpenCode's public credential is a Zen-only lane. Prefer it for free
-	// models that are known to Zen, or while the initial catalog is pending.
-	if hasAnonymous && c.anonymousEligible(model) && (c.zen[model] || len(c.zen) == 0 && len(c.goModels) == 0) {
-		return modelRoute{ID: model, Tier: TierZen, Protocol: protocol, Anonymous: true}, nil
+	keyTiers := c.keyTierOrderLocked(model, hasZenKeys, hasGoKeys)
+	// OpenCode's public credential is a Zen-only lane. Every free model starts
+	// there, even if the current catalog only advertises it on Go: an upstream
+	// rejection will move the request into the authenticated fallback plan.
+	decision := c.anonymousDecision(model)
+	if hasAnonymous && decision.Allowed {
+		return modelRoute{ID: model, Tier: TierZen, Protocol: protocol, Anonymous: true, KeyTiers: keyTiers}, nil
 	}
-	// When a model exists on both tiers, honor the configured priority.
-	preferGo := c.prefer == TierGo
-	if preferGo && c.goModels[model] && hasGoKeys {
-		return modelRoute{ID: model, Tier: TierGo, Protocol: protocol}, nil
-	}
-	if c.zen[model] && hasZenKeys {
-		return modelRoute{ID: model, Tier: TierZen, Protocol: protocol}, nil
-	}
-	if !preferGo && c.goModels[model] && hasGoKeys {
-		return modelRoute{ID: model, Tier: TierGo, Protocol: protocol}, nil
-	}
-	// Model discovery can temporarily fail. Honor the configured priority.
-	if len(c.zen) == 0 && len(c.goModels) == 0 {
-		if preferGo && hasGoKeys {
-			return modelRoute{ID: model, Tier: TierGo, Protocol: protocol}, nil
-		}
-		if hasZenKeys {
-			return modelRoute{ID: model, Tier: TierZen, Protocol: protocol}, nil
-		}
-		if hasGoKeys {
-			return modelRoute{ID: model, Tier: TierGo, Protocol: protocol}, nil
-		}
+	if len(keyTiers) > 0 {
+		return modelRoute{ID: model, Tier: keyTiers[0], Protocol: protocol, KeyTiers: keyTiers}, nil
 	}
 	return modelRoute{}, fmt.Errorf("model %q is not available in the configured Zen or Go pools", model)
 }
 
-func isFreeModel(model string) bool {
-	return strings.Contains(strings.ToLower(model), "free")
+// keyTierOrderLocked builds an authenticated route in prefer order. A tier is
+// included only when it has a key and advertises the model. Before the first
+// successful catalog refresh, configured key pools remain usable so temporary
+// discovery failures do not take the gateway offline.
+func (c *modelCatalog) keyTierOrderLocked(model string, hasZenKeys, hasGoKeys bool) []Tier {
+	catalogPending := len(c.zen) == 0 && len(c.goModels) == 0
+	available := func(tier Tier) bool {
+		switch tier {
+		case TierZen:
+			return hasZenKeys && (catalogPending || c.zen[model])
+		case TierGo:
+			return hasGoKeys && (catalogPending || c.goModels[model])
+		default:
+			return false
+		}
+	}
+	order := []Tier{TierZen, TierGo}
+	if c.prefer == TierGo {
+		order[0], order[1] = order[1], order[0]
+	}
+	result := make([]Tier, 0, len(order))
+	for _, tier := range order {
+		if available(tier) {
+			result = append(result, tier)
+		}
+	}
+	return result
 }
 
-func (c *modelCatalog) anonymousEligible(model string) bool {
+func (c *modelCatalog) anonymousDecision(model string) AnonymousDecision {
 	if c.metadata != nil {
-		return c.metadata.IsFree(model)
+		return c.metadata.Decide(model)
 	}
-	return isFreeModel(model)
+	return AnonymousDecision{Allowed: isFreeModel(model), Source: "name_fallback_metadata_pending"}
+}
+
+func (c *modelCatalog) Diagnostic(model string, requested Protocol, hasZenKeys, hasGoKeys, hasAnonymous bool) ModelRouteDiagnostic {
+	c.mu.RLock()
+	protocol, explicit := c.protocols[model]
+	zen, goModel := c.zen[model], c.goModels[model]
+	c.mu.RUnlock()
+	source := "configured"
+	if !explicit {
+		protocol = inferProtocol(model)
+		source = "inferred"
+	}
+	diagnostic := ModelRouteDiagnostic{
+		Model: model, RequestedProtocol: requested, NativeProtocol: protocol, ProtocolSource: source,
+		AvailableZen: zen, AvailableGo: goModel, AnonymousEligibility: c.anonymousDecision(model),
+	}
+	route, err := c.Route(model, hasZenKeys, hasGoKeys, hasAnonymous)
+	if err != nil {
+		diagnostic.RouteError = err.Error()
+		return diagnostic
+	}
+	diagnostic.Tier, diagnostic.Anonymous = route.Tier, route.Anonymous
+	diagnostic.KeyTiers = append([]Tier(nil), route.KeyTiers...)
+	return diagnostic
+}
+
+func isFreeModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "free")
 }
 
 func (c *modelCatalog) List() []string {
@@ -420,6 +253,12 @@ func toSet(items []string) map[string]bool {
 
 func inferProtocol(model string) Protocol {
 	m := strings.ToLower(model)
+	// This compatibility model speaks Chat Completions despite being exposed
+	// beside models whose names can imply newer OpenAI-style protocols. An
+	// explicit models.protocols entry is resolved before this default.
+	if m == "deepseek-v4-flash-free" {
+		return ProtocolChat
+	}
 	for _, prefix := range []string{"claude-", "qwen"} {
 		if strings.HasPrefix(m, prefix) {
 			return ProtocolAnthropic

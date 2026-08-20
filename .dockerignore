@@ -1,9 +1,9 @@
 *
-!Dockerfile
-!docker-entrypoint.sh
-!config.example.json
+!*.go
 !go.mod
 !go.sum
-!*.go
 !webui/
 !webui/**
+!config.example.json
+!docker-entrypoint.sh
+!Dockerfile

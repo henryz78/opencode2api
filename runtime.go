@@ -34,10 +34,10 @@ type RuntimeManager struct {
 	hub        *LogHub
 	redactor   *SecretRedactor
 	level      *slog.LevelVar
-	modelMeta  *modelMetadataCatalog
 	current    atomic.Pointer[gatewayRuntime]
 	updateMu   sync.Mutex
 	effective  effectiveListeners
+	metadata   *modelMetadataStore
 }
 
 type effectiveListeners struct {
@@ -47,12 +47,11 @@ type effectiveListeners struct {
 }
 
 func NewRuntimeManager(root context.Context, configPath string, cfg Config, logger *slog.Logger, monitor *Monitor, hub *LogHub, redactor *SecretRedactor, level *slog.LevelVar) (*RuntimeManager, error) {
-	modelMeta := newModelMetadataCatalog(configPath + ".models.dev.json")
 	manager := &RuntimeManager{
 		configPath: configPath, root: root, logger: logger, monitor: monitor, hub: hub, redactor: redactor, level: level,
-		modelMeta: modelMeta,
 		effective: effectiveListeners{API: cfg.Listen, WebUI: cfg.WebUI.Listen, WebUIEnabled: cfg.WebUI.Enabled},
 	}
+	manager.metadata = newModelMetadataStore(configPath, logger)
 	if cfg.WebUI.Password != "" {
 		hash, err := hashPassword(cfg.WebUI.Password)
 		if err != nil {
@@ -75,15 +74,16 @@ func NewRuntimeManager(root context.Context, configPath string, cfg Config, logg
 	manager.redactor.Replace(cfg)
 	setLogLevel(manager.level, cfg.Logging.Level)
 	manager.start(runtime)
-	modelMeta.Start(root, logger)
+	manager.metadata.Start(root)
 	return manager, nil
 }
 
 func (m *RuntimeManager) build(cfg Config) (*gatewayRuntime, error) {
-	gateway, err := NewGateway(cfg, m.logger, m.monitor, m.modelMeta)
+	gateway, err := NewGateway(cfg, m.logger, m.monitor)
 	if err != nil {
 		return nil, err
 	}
+	gateway.catalog.metadata = m.metadata
 	return &gatewayRuntime{config: cfg, gateway: gateway, handler: gateway.Handler(), cancel: func() {}}, nil
 }
 
@@ -224,11 +224,11 @@ func (m *RuntimeManager) Shutdown() {
 }
 
 type ResourceSnapshot struct {
-	Models        modelCatalogSnapshot  `json:"models"`
-	ModelMetadata modelMetadataSnapshot `json:"model_metadata"`
-	Keys          []KeyStatus           `json:"keys"`
-	Proxies       []ProxyStatus         `json:"proxies"`
-	Anonymous     bool                  `json:"anonymous"`
+	Models    modelCatalogSnapshot `json:"models"`
+	Keys      []KeyStatus          `json:"keys"`
+	Proxies   []ProxyStatus        `json:"proxies"`
+	Anonymous bool                 `json:"anonymous"`
+	Metadata  MetadataSnapshot     `json:"metadata"`
 }
 
 type KeyStatus struct {
@@ -256,11 +256,10 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 		return ResourceSnapshot{}
 	}
 	gateway := runtime.gateway
-	metadata := modelMetadataSnapshot{}
-	if gateway.metadata != nil {
-		metadata = gateway.metadata.Snapshot()
+	result := ResourceSnapshot{Models: gateway.catalog.Snapshot(), Anonymous: gateway.cfg.Anonymous}
+	if gateway.catalog.metadata != nil {
+		result.Metadata = gateway.catalog.metadata.Snapshot()
 	}
-	result := ResourceSnapshot{Models: gateway.catalog.Snapshot(), ModelMetadata: metadata, Anonymous: gateway.cfg.Anonymous}
 	result.Keys = append(result.Keys, keyStatuses("zen", gateway.zenNodes)...)
 	result.Keys = append(result.Keys, keyStatuses("go", gateway.goNodes)...)
 	gateway.zenNodes.bindingsMu.Lock()
@@ -282,20 +281,34 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 	return result
 }
 
-func (m *RuntimeManager) DebugModels() DebugModelsResponse {
+func (m *RuntimeManager) DebugModels() ([]ModelRouteDiagnostic, MetadataSnapshot) {
 	runtime := m.current.Load()
 	if runtime == nil {
-		return DebugModelsResponse{Object: "list", Data: []DebugModel{}}
+		return nil, MetadataSnapshot{}
 	}
-	return runtime.gateway.DebugModels()
+	gateway := runtime.gateway
+	models := gateway.catalog.List()
+	result := make([]ModelRouteDiagnostic, 0, len(models))
+	for _, model := range models {
+		if !supportedModel(model) {
+			continue
+		}
+		result = append(result, gateway.catalog.Diagnostic(model, "", len(gateway.cfg.ZenKeys) > 0, len(gateway.cfg.GoKeys) > 0, gateway.cfg.Anonymous))
+	}
+	metadata := MetadataSnapshot{}
+	if gateway.catalog.metadata != nil {
+		metadata = gateway.catalog.metadata.Snapshot()
+	}
+	return result, metadata
 }
 
-func (m *RuntimeManager) DebugRoute(model string) (DebugRouteInfo, error) {
+func (m *RuntimeManager) DebugRoute(model string, requested Protocol) ModelRouteDiagnostic {
 	runtime := m.current.Load()
 	if runtime == nil {
-		return DebugRouteInfo{}, fmt.Errorf("runtime is unavailable")
+		return ModelRouteDiagnostic{Model: model, RequestedProtocol: requested, RouteError: "gateway runtime is unavailable"}
 	}
-	return runtime.gateway.DebugRoute(model)
+	gateway := runtime.gateway
+	return gateway.catalog.Diagnostic(model, requested, len(gateway.cfg.ZenKeys) > 0, len(gateway.cfg.GoKeys) > 0, gateway.cfg.Anonymous)
 }
 
 func keyStatuses(tier string, pool *nodePool) []KeyStatus {

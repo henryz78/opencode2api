@@ -17,7 +17,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -43,17 +42,22 @@ type loginWindow struct {
 }
 
 type AdminServer struct {
-	manager  *RuntimeManager
-	monitor  *Monitor
-	logs     *LogHub
-	logger   *slog.Logger
-	mu       sync.Mutex
-	sessions map[string]adminSession
-	attempts map[string]loginWindow
+	manager       *RuntimeManager
+	monitor       *Monitor
+	logs          *LogHub
+	logger        *slog.Logger
+	mu            sync.Mutex
+	sessions      map[string]adminSession
+	attempts      map[string]loginWindow
+	debugAttempts map[string]loginWindow
+	lastInference *DebugInferenceResult
 }
 
 func NewAdminServer(manager *RuntimeManager, monitor *Monitor, logs *LogHub, logger *slog.Logger) *AdminServer {
-	return &AdminServer{manager: manager, monitor: monitor, logs: logs, logger: logger, sessions: make(map[string]adminSession), attempts: make(map[string]loginWindow)}
+	return &AdminServer{
+		manager: manager, monitor: monitor, logs: logs, logger: logger, sessions: make(map[string]adminSession),
+		attempts: make(map[string]loginWindow), debugAttempts: make(map[string]loginWindow),
+	}
 }
 
 func (a *AdminServer) Handler() http.Handler {
@@ -68,6 +72,8 @@ func (a *AdminServer) Handler() http.Handler {
 	mux.Handle("PUT /api/account", a.authenticate(a.csrf(http.HandlerFunc(a.handleAccount))))
 	mux.Handle("GET /api/monitor", a.authenticate(http.HandlerFunc(a.handleMonitor)))
 	mux.Handle("GET /api/debug/models", a.authenticate(http.HandlerFunc(a.handleDebugModels)))
+	mux.Handle("POST /api/debug/inference", a.authenticate(a.csrf(http.HandlerFunc(a.handleDebugInference))))
+	// Keep the original Chat-only Playground endpoint as a compatibility shim.
 	mux.Handle("POST /api/debug/chat", a.authenticate(a.csrf(http.HandlerFunc(a.handleDebugChat))))
 	mux.Handle("GET /api/logs", a.authenticate(http.HandlerFunc(a.handleLogs)))
 	mux.Handle("GET /api/logs/stream", a.authenticate(http.HandlerFunc(a.handleLogStream)))
@@ -390,124 +396,183 @@ func (a *AdminServer) handleAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminServer) handleMonitor(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"version": version, "metrics": a.monitor.Snapshot(), "resources": a.manager.Resources()})
+	metrics := a.monitor.Snapshot()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version": version, "metrics": metrics, "usage": metrics.Usage, "upstream": metrics.Upstream, "resources": a.manager.Resources(),
+	})
+}
+
+type DebugInferenceRequest struct {
+	Protocol Protocol       `json:"protocol"`
+	Request  map[string]any `json:"request"`
+}
+
+type DebugInferenceResult struct {
+	OK         bool                 `json:"ok"`
+	HTTPStatus int                  `json:"http_status"`
+	DurationMS int64                `json:"duration_ms"`
+	RequestID  string               `json:"request_id,omitempty"`
+	Route      ModelRouteDiagnostic `json:"route"`
+	Response   any                  `json:"response"`
 }
 
 func (a *AdminServer) handleDebugModels(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, a.manager.DebugModels())
+	models, metadata := a.manager.DebugModels()
+	a.mu.Lock()
+	last := a.lastInference
+	a.mu.Unlock()
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"models": models, "metadata": metadata, "last_inference": last})
 }
 
-func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
-	var input map[string]any
+func (a *AdminServer) handleDebugInference(w http.ResponseWriter, r *http.Request) {
+	if !a.allowDebug(clientIP(r)) {
+		writeAdminError(w, http.StatusTooManyRequests, "debug_rate_limited", "too many Playground requests; retry in one minute")
+		return
+	}
+	var input DebugInferenceRequest
 	if err := decodeAdminJSON(w, r, &input); err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	model, ok := input["model"].(string)
-	if !ok || strings.TrimSpace(model) == "" {
-		writeAdminError(w, http.StatusBadRequest, "invalid_model", "model is required")
+	if !validProtocol(input.Protocol) {
+		writeAdminError(w, http.StatusBadRequest, "invalid_protocol", "protocol must be chat, responses, or anthropic")
 		return
 	}
-	routeInfo, _ := a.manager.DebugRoute(strings.TrimSpace(model))
-	setDebugRouteHeaders(w, routeInfo)
-	messages, ok := input["messages"].([]any)
-	if !ok || len(messages) == 0 {
-		writeAdminError(w, http.StatusBadRequest, "invalid_messages", "at least one message is required")
+	if input.Request == nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request must be a JSON object")
 		return
 	}
-	input["model"] = strings.TrimSpace(model)
-	// The first version of the playground is deliberately non-streaming so the
-	// admin endpoint can return a complete, inspectable JSON response.
-	input["stream"] = false
-	body, err := json.Marshal(input)
+	payload := cloneMap(input.Request)
+	payload["stream"] = false
+	model := stringAt(payload, "model")
+	if model == "" {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request.model is required")
+		return
+	}
+	route := a.manager.DebugRoute(model, input.Protocol)
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request contains unsupported JSON values")
 		return
 	}
-	status, headers, responseBody := a.debugGatewayRequest(http.MethodPost, "/v1/chat/completions", body)
-	if status == 0 {
-		writeAdminError(w, http.StatusBadGateway, "debug_unavailable", "no local server key is configured")
+	path := protocolPath(input.Protocol)
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "http://gateway.local"+path, bytes.NewReader(encoded))
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, "debug_request_failed", "could not construct Gateway request")
 		return
 	}
-	if status/100 != 2 {
-		writeDebugError(w, http.StatusBadGateway, "debug_chat_failed", debugResponseMessage(status, responseBody), headers)
-		return
-	}
-	writeDebugResponse(w, status, headers, responseBody)
-}
-
-func (a *AdminServer) debugGatewayRequest(method, path string, body []byte) (int, http.Header, []byte) {
 	cfg := a.manager.Config()
 	if len(cfg.ServerKeys) == 0 {
-		return 0, nil, nil
+		writeAdminError(w, http.StatusServiceUnavailable, "debug_unavailable", "no local server key is configured")
+		return
 	}
-	request := httptest.NewRequest(method, path, bytes.NewReader(body))
-	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+cfg.ServerKeys[0])
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	recorder := httptest.NewRecorder()
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	recorder := newDebugResponseRecorder()
+	started := time.Now()
 	a.manager.Handler().ServeHTTP(recorder, request)
-	response := recorder.Result()
-	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	duration := time.Since(started)
+	requestID := recorder.Header().Get("x-request-id")
+	if requestID != "" {
+		upstream := a.monitor.Snapshot().Upstream.Recent
+		for index := len(upstream) - 1; index >= 0; index-- {
+			if upstream[index].RequestID == requestID {
+				route.Anonymous = upstream[index].Anonymous
+				route.Tier = Tier(upstream[index].Tier)
+				break
+			}
+		}
+	}
+	var raw any
+	if json.Unmarshal(recorder.body.Bytes(), &raw) != nil {
+		raw = recorder.body.String()
+	}
+	raw = sanitizeDebugValue(raw, a.manager.redactor)
+	result := DebugInferenceResult{
+		OK: recorder.status >= 200 && recorder.status < 300, HTTPStatus: recorder.status,
+		DurationMS: max(duration.Milliseconds(), 0), RequestID: requestID, Route: route, Response: raw,
+	}
+	a.mu.Lock()
+	a.lastInference = &result
+	a.mu.Unlock()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Debug-Tier", string(result.Route.Tier))
+	w.Header().Set("X-Debug-Protocol", string(result.Route.NativeProtocol))
+	w.Header().Set("X-Debug-Anonymous", strconv.FormatBool(result.Route.Anonymous))
+	w.Header().Set("X-Debug-Free", strconv.FormatBool(result.Route.AnonymousEligibility.Allowed))
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *AdminServer) handleDebugChat(w http.ResponseWriter, r *http.Request) {
+	var requestPayload map[string]any
+	if err := decodeAdminJSON(w, r, &requestPayload); err != nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if requestPayload == nil {
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request must be a JSON object")
+		return
+	}
+	encoded, err := json.Marshal(DebugInferenceRequest{Protocol: ProtocolChat, Request: requestPayload})
 	if err != nil {
-		return http.StatusBadGateway, response.Header, []byte("failed to read local debug response")
+		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request contains unsupported JSON values")
+		return
 	}
-	return response.StatusCode, response.Header, responseBody
+	clone := r.Clone(r.Context())
+	clone.Body = io.NopCloser(bytes.NewReader(encoded))
+	clone.ContentLength = int64(len(encoded))
+	a.handleDebugInference(w, clone)
 }
 
-func writeDebugResponse(w http.ResponseWriter, status int, headers http.Header, body []byte) {
-	if contentType := headers.Get("Content-Type"); contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-	}
-	if requestID := headers.Get("X-Request-Id"); requestID != "" {
-		w.Header().Set("X-Request-Id", requestID)
-	}
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
+type debugResponseRecorder struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
 }
 
-func writeDebugError(w http.ResponseWriter, status int, code, message string, headers http.Header) {
-	if requestID := headers.Get("X-Request-Id"); requestID != "" {
-		w.Header().Set("X-Request-Id", requestID)
-	}
-	writeAdminError(w, status, code, message)
+func newDebugResponseRecorder() *debugResponseRecorder {
+	return &debugResponseRecorder{header: make(http.Header), status: http.StatusOK}
 }
 
-func setDebugRouteHeaders(w http.ResponseWriter, route DebugRouteInfo) {
-	if route.Tier != "" {
-		w.Header().Set("X-Debug-Tier", route.Tier)
+func (recorder *debugResponseRecorder) Header() http.Header { return recorder.header }
+
+func (recorder *debugResponseRecorder) WriteHeader(status int) {
+	if recorder.status != http.StatusOK || status == http.StatusOK {
+		return
 	}
-	if route.Protocol != "" {
-		w.Header().Set("X-Debug-Protocol", route.Protocol)
-	}
-	w.Header().Set("X-Debug-Anonymous", strconv.FormatBool(route.Anonymous))
-	w.Header().Set("X-Debug-Free", strconv.FormatBool(route.Free))
-	w.Header().Set("X-Debug-Metadata-Known", strconv.FormatBool(route.MetadataKnown))
-	w.Header().Set("X-Debug-Metadata-Ready", strconv.FormatBool(route.MetadataReady))
+	recorder.status = status
 }
 
-func debugResponseMessage(status int, body []byte) string {
-	var envelope struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
+func (recorder *debugResponseRecorder) Write(data []byte) (int, error) {
+	return recorder.body.Write(data)
+}
+
+func sanitizeDebugValue(value any, redactor *SecretRedactor) any {
+	switch current := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(current))
+		for key, item := range current {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "authorization") || strings.Contains(lower, "cookie") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") || strings.Contains(lower, "api-key") {
+				result[key] = "***"
+				continue
+			}
+			result[key] = sanitizeDebugValue(item, redactor)
+		}
+		return result
+	case []any:
+		result := make([]any, len(current))
+		for index, item := range current {
+			result[index] = sanitizeDebugValue(item, redactor)
+		}
+		return result
+	case string:
+		return redactor.String(current)
+	default:
+		return value
 	}
-	if json.Unmarshal(body, &envelope) == nil && strings.TrimSpace(envelope.Error.Message) != "" {
-		return envelope.Error.Message
-	}
-	message := strings.TrimSpace(string(body))
-	if len(message) > 400 {
-		message = message[:400] + "…"
-	}
-	if message == "" {
-		return fmt.Sprintf("local API returned HTTP %d", status)
-	}
-	return fmt.Sprintf("local API returned HTTP %d: %s", status, message)
 }
 
 func (a *AdminServer) handleLogs(w http.ResponseWriter, r *http.Request) {
@@ -671,6 +736,29 @@ func (a *AdminServer) recordLoginFailure(client string) {
 	}
 	window.Count++
 	a.attempts[client] = window
+}
+
+func (a *AdminServer) allowDebug(client string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	window := a.debugAttempts[client]
+	if window.Started.IsZero() || now.Sub(window.Started) >= time.Minute {
+		window = loginWindow{Started: now}
+	}
+	if window.Count >= 12 {
+		return false
+	}
+	window.Count++
+	a.debugAttempts[client] = window
+	if len(a.debugAttempts) > 4096 {
+		for key, candidate := range a.debugAttempts {
+			if now.Sub(candidate.Started) >= time.Minute {
+				delete(a.debugAttempts, key)
+			}
+		}
+	}
+	return true
 }
 
 func (a *AdminServer) cleanupSessionsLocked(now time.Time) {
