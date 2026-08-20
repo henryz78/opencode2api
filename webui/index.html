@@ -94,9 +94,6 @@
     .context-rail p { color: var(--muted); font-size: 13px; }
     .context-note { margin-top: 34px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--faint); font: 10px/1.65 var(--mono); }
     .main { min-width: 0; max-width: 100%; overflow: hidden; }
-    .page-heading { display: flex; justify-content: space-between; gap: 24px; align-items: end; border-bottom: 1px solid var(--ink); padding-bottom: 26px; }
-    .page-heading h2 { margin-top: 11px; font: 500 clamp(40px, 5.5vw, 78px)/.98 var(--display); letter-spacing: -.065em; }
-    .page-heading p { max-width: 300px; color: var(--muted); font-size: 13px; }
     .page.hidden { display: none; }
     .button { min-height: 40px; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink); padding: 6px 13px; }
     .button:hover { background: var(--ink); color: var(--paper); }
@@ -263,8 +260,6 @@
       .workspace-nav { padding: 0 16px; }
       .workspace-nav button { min-width: 92px; padding-right: 12px; margin-right: 12px; }
       .content-shell { width: calc(100% - 32px); padding-bottom: 52px; }
-      .page-heading { align-items: flex-start; flex-direction: column; gap: 14px; }
-      .page-heading h2 { font-size: clamp(42px, 14vw, 67px); }
       .restart { align-items: flex-start; flex-direction: column; }
       .metrics { grid-template-columns: 1fr 1fr; }
       .metric { min-height: 110px; border-bottom: 1px solid var(--line); }
@@ -380,7 +375,6 @@
         <div class="context-note">FORM FROM CONTENT<br>状态 → 影响 → 操作 → 回执<br><br>数据源：monitor + SSE</div>
       </aside>
       <main class="main">
-        <div class="page-heading"><div><div id="page-index" class="eyebrow">01 / operating record</div><h2 id="page-title">运行总览</h2></div><p id="page-sub">最近一小时的服务状态</p></div>
         <div id="restart-notice" class="restart hidden" role="status"></div>
 
         <section id="page-overview" class="page">
@@ -576,9 +570,6 @@
       const meta = titles[page];
       $$('.workspace-nav button').forEach(button => button.classList.toggle('active', button.dataset.page === page));
       $$('.page').forEach(view => view.classList.toggle('hidden', view.id !== 'page-' + page));
-      $('#page-title').textContent = meta.title;
-      $('#page-sub').textContent = meta.sub;
-      $('#page-index').textContent = meta.index;
       $('#rail-index').textContent = meta.index;
       $('#rail-page-title').textContent = meta.title;
       $('#rail-page-sub').textContent = meta.sub;
