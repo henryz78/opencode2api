@@ -83,6 +83,10 @@ func (m *RuntimeManager) build(cfg Config) (*gatewayRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	gateway.capabilityCachePath = m.configPath + ".capabilities.json"
+	if err := gateway.loadProtocolCapabilityCache(); err != nil {
+		m.logger.Warn("OpenCode capability catalog cache load failed", "component", "models", "event", "capability_cache_load_failed", "error", err)
+	}
 	gateway.catalog.metadata = m.metadata
 	return &gatewayRuntime{config: cfg, gateway: gateway, handler: gateway.Handler(), cancel: func() {}}, nil
 }
@@ -290,9 +294,6 @@ func (m *RuntimeManager) DebugModels() ([]ModelRouteDiagnostic, MetadataSnapshot
 	models := gateway.catalog.List()
 	result := make([]ModelRouteDiagnostic, 0, len(models))
 	for _, model := range models {
-		if !supportedModel(model) {
-			continue
-		}
 		result = append(result, gateway.catalog.Diagnostic(model, "", len(gateway.cfg.ZenKeys) > 0, len(gateway.cfg.GoKeys) > 0, gateway.cfg.Anonymous))
 	}
 	metadata := MetadataSnapshot{}

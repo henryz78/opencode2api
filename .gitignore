@@ -1,6 +1,7 @@
 .key
 config.json
 *.models.dev.json
+*.capabilities.json
 opencode/
 opencode2api
 opencode2api.exe

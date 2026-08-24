@@ -14,6 +14,7 @@
 - 分离配置 Zen key 池与 Zen Go key 池
 - 支持无需上游 key 的 Zen 匿名模式，免费模型先走匿名通道，失败后按 `prefer` 顺序回退 Zen/Go key
 - 每 24 小时从 models.dev 更新 OpenCode 成本与弃用信息；已知价格以零成本记录为准，metadata 未就绪或缺少模型时保留名称含 `free` 的兼容回退
+- 按配置周期同步 Zen/Go `/v1/models`，并从 OpenCode `models.opencode.ai/api.json` 自动同步每个 Tier 的原生协议与不支持模型；不把模型 ID 硬编码在程序中
 - 模型同时存在于两个上游时按 `prefer` 配置排列 Go/Zen key 的首选与回退顺序（默认 Go）
 - 支持直连、HTTP、HTTPS、SOCKS5 和 SOCKS5H 代理
 - 支持从文本文件读取代理池，并与配置内的代理合并、去重
@@ -58,7 +59,7 @@ http://服务器地址:8081
 
 Field Manual WebUI 包含运行桌面、基础启动检查、接入手册、Token 用量、三协议 Playground、路由诊断、配置、事件日志和账号安全页面。启动检查只读取当前状态，不会自动修改配置或发送请求。接入手册会生成 Chat、Responses、Anthropic、Python 和 JavaScript 示例，但始终使用 `YOUR_API_KEY` 占位符，不把真实 Server Key 写入页面。
 
-Token 页面展示用量覆盖率、每分钟趋势、模型排行与 Zen/Go Tier 分布。诊断页展示 models.dev 状态、模型原生协议与匿名判断来源、Key/代理状态、逐次上游尝试以及最近一次 Playground 追踪；实时日志通过 SSE 推送。所有动态管理数据都以 DOM 文本节点渲染。
+Token 页面展示用量覆盖率、每分钟趋势、模型排行与 Zen/Go Tier 分布。诊断页展示 models.dev 与 OpenCode 能力目录状态、模型原生协议与匿名判断来源、Key/代理状态、逐次上游尝试以及最近一次 Playground 追踪；实时日志通过 SSE 推送。所有动态管理数据都以 DOM 文本节点渲染。
 
 监控、上游尝试、最近 Playground 结果和日志仅保存在内存。**进程重启会清空全部监控与诊断历史，包括 lifetime 累计。** stdout 日志仍可由 Docker 或日志平台收集；models.dev 价格快取是独立的磁盘兼容资料，不属于监控历史。
 
@@ -74,7 +75,7 @@ Token 页面展示用量覆盖率、每分钟趋势、模型排行与 Zen/Go Tie
 | `upstream` | 上游尝试的 `lifetime`、`last_hour` 与 `recent`。按 Tier、匿名/Key 通道、Key 指纹聚合。 |
 | `resources` | 模型目录、Key 冷却、脱敏代理节点、匿名开关和 models.dev metadata 状态。 |
 
-`usage.*.tokens` 与模型/Tier 项均包含 `input_tokens`、`output_tokens`、`cached_tokens`、`reasoning_tokens`、`total_tokens`。`metrics.series` 的每分钟点也包含这些 Token 字段和 `usage_reported`。普通 JSON、同协议 SSE 与跨协议 SSE 响应都会解析上游 usage；`coverage` 是收到 usage 的推理请求数除以已建立上游路由的推理请求数。上游未提供 usage 时不会估算 Token。
+`usage.*.tokens` 与模型/Tier 项均包含 `input_tokens`、`output_tokens`、`cached_tokens`、`reasoning_tokens`、`total_tokens`。其中 `input_tokens` 统一表示包含缓存读写的总输入，`cached_tokens` 单独表示缓存读取量。`metrics.series` 的每分钟点也包含这些 Token 字段和 `usage_reported`。普通 JSON、同协议 SSE 与跨协议 SSE 响应都会解析上游 usage；`coverage` 是收到 usage 的推理请求数除以已建立上游路由的推理请求数。上游未提供 usage 时不会估算 Token。
 
 每个 `upstream.recent` 项包含时间、Request ID、模型、Tier、尝试序号、匿名标记、通道、Key 指纹、`proxy_node`、HTTP 状态、耗时、成功标记和结果分类。匿名请求的 Key ID 固定显示为 `anonymous`；真实 Key 只显示 SHA-256 稳定短指纹。代理 URL 的认证信息会被移除，字段名称明确为代理节点而非出口 IP。
 
@@ -332,8 +333,8 @@ socks5://127.0.0.1:1080  # 备用代理
 
 | 字段 | 含义 |
 | --- | --- |
-| `models.refresh_seconds` | 重新读取 Zen 和 Go 模型列表的间隔秒数。两个列表会并发刷新。 |
-| `models.protocols` | 手动指定模型的原生协议。值只能是 `chat`、`responses` 或 `anthropic`。通常保持为空。 |
+| `models.refresh_seconds` | 重新读取 Zen 和 Go 模型列表及 OpenCode 能力目录的间隔秒数。两个模型列表与能力目录会并发刷新。 |
+| `models.protocols` | 手动指定模型的原生协议。值只能是 `chat`、`responses` 或 `anthropic`，并覆盖自动同步结果。通常保持为空。 |
 
 
 模型协议覆盖示例：
@@ -344,9 +345,9 @@ socks5://127.0.0.1:1080  # 备用代理
 }
 ```
 
-模型同时存在于 Zen 与 Go 时按 `prefer` 配置排列认证 Key 顺序：值为 `go` 时先 Go 后 Zen，值为 `zen` 时先 Zen 后 Go（默认 `go`）。首选 Tier 失败后才回退另一 Tier；仅存在于某一池时只使用该池的 key。免费模型在这条认证顺序之前额外尝试匿名 Zen。
+自动协议来源是 `https://models.opencode.ai/api.json`，并用 OpenCode 官方 Zen/Go endpoint 文档补充具体路径：模型的 `provider.npm`（或 Tier 默认 `npm`）及文档 endpoint 会映射为 OpenAI Responses、Anthropic Messages 或 OpenAI-compatible Chat。能力快照成功刷新后会写入 `config.json.capabilities.json`，启动时优先读取最近一次有效快照；联网失败时继续使用该快照，避免 Railway 重启因临时网络问题丢失已知路由。首次启动且没有能力快照时，不会暴露能力未知的模型，避免把不支持的模型误路由到 Chat。手动 `models.protocols` 可用于上游实验模型。
 
-`deepseek-v4-flash-free` 默认使用 Chat 原生协议。与所有模型一样，`models.protocols` 中的显式映射优先于该默认值和名称推断。
+模型同时存在于 Zen 与 Go 时按 `prefer` 配置排列认证 Key 顺序：值为 `go` 时先 Go 后 Zen，值为 `zen` 时先 Zen 后 Go（默认 `go`）。首选 Tier 失败后才回退另一 Tier；仅存在于某一池时只使用该池的 key。免费模型在这条认证顺序之前额外尝试匿名 Zen。
 
 ### Thinking 工具历史兼容
 
@@ -360,6 +361,10 @@ socks5://127.0.0.1:1080  # 备用代理
 - Responses 模型通常使用 `safety_identifier`，Chat Completions 兼容层使用 `user`；Anthropic 原生请求不会被添加 OpenAI 专用字段。
 - 工具调用优先使用 `tool_choice: "auto"`。部分免费模型不接受指定工具名或 `required`，但仍能接受工具定义；`auto` 只表示允许模型调用，模型也可能选择直接返回文本。
 - 客户端收到 `tool_call` / `function_call` / `tool_use` 后，应执行本地工具并把工具结果作为下一轮请求发回；Gateway 只负责协议转换，不执行客户端工具。
+
+流式响应会兼容 Chat 上游的 `delta.reasoning_content` 与 `delta.reasoning`。Anthropic 上游的 `event: error`、Responses 上游的 `response.failed` 以及 Chat 的错误类 `finish_reason` 会转换为目标协议的结构化错误事件，不会伪装成正常结束或静默断流。`redacted_thinking` 在支持加密 reasoning 的 Responses 目标中保留 `encrypted_content`，在无法表达加密块的 Chat/Anthropic 目标中使用 `[redacted thinking]` 明确占位。
+
+协议文档未定义或当前 bridge 无法无损表达的输入 content block（例如未实现的音频/文件类型）会返回明确的转换错误，不再静默丢弃内容。
 
 ### `performance`
 
@@ -406,9 +411,10 @@ keys、proxy、上游、重试、模型、性能、优先 tier 和日志级别�
 代理会为上游添加 OpenCode 使用的 `User-Agent`、`x-opencode-client`、`x-opencode-session`、`x-opencode-request` 和 `x-opencode-project` 请求头。
 
 - 每个请求使用不同的 `x-opencode-request`，同一次请求的重试保持不变。
-- 优先使用客户端提供的 `x-opencode-session`、`x-session-id`、`conversation-id`、`conversation_id` 或 `metadata.session_id` 生成会话 ID。
+- 优先使用客户端提供的 `x-opencode-session`、`x-session-affinity`、`X-Session-Id`、`x-session-id`、`conversation-id`、`conversation_id` 或 `metadata.session_id` 生成会话 ID。
 - 没有显式会话标识时，使用第一条用户消息生成稳定会话 ID，使同一段多轮对话保持一致。
 - 如果两个独立会话的第一条消息完全相同，建议由客户端发送不同的 `x-session-id`，以确保两个会话严格分离。
+- 上游请求同时发送 `x-session-affinity`、`X-Session-Id` 和可选的 `x-parent-session-id`，以兼容 OpenCode 近期的会话关联要求。
 
 ## 致谢
 

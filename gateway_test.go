@@ -283,7 +283,12 @@ func TestGatewayAnonymousRouteUsesPublicAndFiltersPaidModels(t *testing.T) {
 	defer upstream.Close()
 
 	gateway, _ := newGatewayTest(t, upstream.URL, true, nil, nil)
-	gateway.catalog.Replace([]string{freeModel, paidModel}, nil)
+	gateway.catalog.ReplaceWithCapabilities(
+		[]string{freeModel, paidModel},
+		nil,
+		map[Tier]map[string]Protocol{TierZen: {freeModel: ProtocolChat, paidModel: ProtocolChat}},
+		nil,
+	)
 
 	modelsRecorder := gatewayRequest(t, gateway.Handler(), http.MethodGet, "/v1/models", nil)
 	if modelsRecorder.Code != http.StatusOK {
