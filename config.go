@@ -351,6 +351,7 @@ func SaveConfigAtomic(path string, cfg Config) error {
 		return nil
 	}
 	if _, statErr := os.Stat(path); statErr == nil {
+		_ = os.Remove(backup)
 		if err := copyFile(path, backup); err != nil {
 			return fmt.Errorf("backup config: %w", err)
 		}

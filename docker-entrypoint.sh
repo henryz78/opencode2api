@@ -21,7 +21,7 @@ fi
 
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "$state_dir"
-    chown opencode2api:opencode2api "$state_dir"
+    chown -R opencode2api:opencode2api "$state_dir"
     exec su-exec opencode2api:opencode2api "$0" "$@"
 fi
 
