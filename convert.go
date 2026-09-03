@@ -117,6 +117,9 @@ func prepareUpstreamRequest(from, to Protocol, input map[string]any, upstreamURL
 	if err != nil {
 		return nil, err
 	}
+	if to == ProtocolChat {
+		normalizeChatNullContent(output)
+	}
 	normalizeToolReasoningHistory(to, stringAt(output, "model"), upstreamURL, output)
 	return output, nil
 }
@@ -210,6 +213,27 @@ func normalizeChatToolReasoningHistory(input map[string]any) bool {
 		}
 		message["reasoning_content"] = reasoning
 		changed = true
+	}
+	return changed
+}
+
+// normalizeChatNullContent ensures messages in Chat requests do not carry
+// null content, which upstream providers such as Xiaomi MiMo reject with 400.
+func normalizeChatNullContent(input map[string]any) bool {
+	messages, ok := input["messages"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		if message["content"] == nil {
+			message["content"] = ""
+			changed = true
+		}
 	}
 	return changed
 }
@@ -611,7 +635,7 @@ func encodeChatRequest(request bridgeRequest) (map[string]any, error) {
 			if len(results) > 0 {
 				return nil, fmt.Errorf("messages[%d]: assistant message contains tool results", i)
 			}
-			encoded := map[string]any{"role": "assistant", "content": nil}
+			encoded := map[string]any{"role": "assistant", "content": ""}
 			if value, ok := bridgeReasoningText(reasoning); ok {
 				encoded["reasoning_content"] = value
 			}
@@ -781,6 +805,9 @@ func encodeResponsesRequest(request bridgeRequest) map[string]any {
 		for _, block := range message.Blocks {
 			switch block.Kind {
 			case "reasoning":
+				if block.Text == "" && block.Encrypted == "" && block.ID == "" {
+					continue
+				}
 				flushContent()
 				items = append(items, encodeResponsesReasoning(block, false))
 			case "text":
@@ -1027,7 +1054,7 @@ func decodeChatReasoning(message map[string]any) []bridgeBlock {
 		value, exists = message["reasoning"]
 	}
 	text, ok := value.(string)
-	if !exists || !ok {
+	if !exists || !ok || strings.TrimSpace(text) == "" {
 		return nil
 	}
 	return []bridgeBlock{{
@@ -1063,14 +1090,17 @@ func decodeResponsesReasoning(item map[string]any) []bridgeBlock {
 
 func encodeResponsesReasoning(block bridgeBlock, completed bool) map[string]any {
 	id := block.ID
-	if id == "" {
+	if id == "" && completed {
 		id = randomID("rs", 12)
 	}
 	summary := []any{}
 	if block.Text != "" {
 		summary = append(summary, map[string]any{"type": "summary_text", "text": block.Text})
 	}
-	item := map[string]any{"id": id, "type": "reasoning", "summary": summary}
+	item := map[string]any{"type": "reasoning", "summary": summary}
+	if id != "" {
+		item["id"] = id
+	}
 	if block.Encrypted != "" {
 		item["encrypted_content"] = block.Encrypted
 	}
