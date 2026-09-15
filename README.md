@@ -2,7 +2,7 @@
 
 `opencode2api` 是一个使用 Go 编写的 OpenCode Zen / Zen Go 协议代理。它对外提供标准 OpenAI 与 Anthropic API，并自动添加 OpenCode 客户端请求头。
 
-当前功能版本：`v1.2.0` · [版本记录](CHANGELOG.md)
+当前功能版本：`v1.3.0` · [版本记录](CHANGELOG.md)
 
 主要功能：
 
@@ -15,6 +15,8 @@
 - 支持无需上游 key 的 Zen 匿名模式，免费模型先走匿名通道，失败后按 `prefer` 顺序回退 Zen/Go key
 - 每 24 小时从 models.dev 更新 OpenCode 成本与弃用信息；已知价格以零成本记录为准，metadata 未就绪或缺少模型时保留名称含 `free` 的兼容回退
 - 按配置周期同步 Zen/Go `/v1/models`，并从 OpenCode `models.opencode.ai/api.json` 自动同步每个 Tier 的原生协议与不支持模型；不把模型 ID 硬编码在程序中
+- `/v1/models` 返回每个模型的上下文窗口、推理、工具调用和输入/输出模态能力
+- 对上游过期的 Responses reasoning 引用自动做一次去引用重试，避免中断会话直接失败
 - 模型同时存在于两个上游时按 `prefer` 配置排列 Go/Zen key 的首选与回退顺序（默认 Go）
 - 支持直连、HTTP、HTTPS、SOCKS5 和 SOCKS5H 代理
 - 支持从文本文件读取代理池，并与配置内的代理合并、去重
@@ -112,7 +114,7 @@ lifetime 从当前进程启动开始；last hour 使用 60 个一分钟 Bucket�
 需要 Go 1.24 或更高版本。
 
 ```bash
-go build -o opencode2api ./
+go build -o opencode2api ./cmd/opencode2api
 ```
 
 ## 下载
@@ -151,7 +153,7 @@ docker compose logs -f
 可通过环境变量固定镜像版本和修改宿主机端口：
 
 ```bash
-OPENCODE2API_VERSION=v1.2.3 OPENCODE2API_PORT=18080 OPENCODE2API_WEBUI_PORT=18081 docker compose up -d
+OPENCODE2API_VERSION=v1.3.0 OPENCODE2API_PORT=18080 OPENCODE2API_WEBUI_PORT=18081 docker compose up -d
 ```
 
 不使用 Compose 时也可直接运行 GHCR 镜像：
@@ -166,7 +168,7 @@ docker run -d --name opencode2api --restart unless-stopped \
   ghcr.io/henryz78/opencode2api:latest
 ```
 
-普通分支 push 会由 `.github/workflows/docker-image.yml` 构建并发布 `latest`、分支和 SHA 镜像标签；推送 `v*` 版本 tag 时由 `release.yml` 构建 Linux/Windows/macOS 二进制、多架构 GHCR 镜像并创建 GitHub Release。两个工作流分工不同，不会重复写入版本镜像标签。当前功能版本为 `v1.2.0`，正式镜像为 `ghcr.io/henryz78/opencode2api:v1.2.0`。
+普通分支 push 会由 `.github/workflows/docker-image.yml` 构建并发布 `latest`、分支和 SHA 镜像标签；推送 `v*` 版本 tag 时由 `release.yml` 构建 Linux/Windows/macOS 二进制、多架构 GHCR 镜像并创建 GitHub Release。两个工作流分工不同，不会重复写入版本镜像标签。当前功能版本为 `v1.3.0`，正式镜像为 `ghcr.io/henryz78/opencode2api:v1.3.0`。
 
 ## Railway 部署
 
