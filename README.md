@@ -33,13 +33,13 @@
 
 ## API 路径
 
-| 方法 | 路径 | 协议 |
-| --- | --- | --- |
-| `GET` | `/v1/models` | OpenAI 模型列表 |
+| 方法   | 路径                   | 协议                    |
+| ------ | ---------------------- | ----------------------- |
+| `GET`  | `/v1/models`           | OpenAI 模型列表         |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions |
-| `POST` | `/v1/responses` | OpenAI Responses |
-| `POST` | `/v1/messages` | Anthropic Messages |
-| `GET` | `/healthz` | 健康检查 |
+| `POST` | `/v1/responses`        | OpenAI Responses        |
+| `POST` | `/v1/messages`         | Anthropic Messages      |
+| `GET`  | `/healthz`             | 健康检查                |
 
 `/healthz` 无需 API key，返回服务版本以及模型目录、Zen/Go key、匿名开关和代理池的汇总状态，不会暴露 key 或代理地址。模型目录尚未完成首次刷新、已经过期、没有可暴露模型或没有健康代理时返回 HTTP `503`；其余情况返回 `200`。
 
@@ -69,13 +69,13 @@ Token 页面展示用量覆盖率、每分钟趋势、模型排行与 Zen/Go Tie
 
 登录 WebUI 后，`GET /api/monitor` 返回以下顶层字段；该管理 API 只在 `webui.listen` 上提供，并受 Session 保护：
 
-| 字段 | 内容 |
-| --- | --- |
-| `version` | 当前程序版本。 |
-| `metrics` | 原有请求统计：进程启动时间、活跃请求/流、lifetime 与最近一小时成功率/延迟、端点/模型/Tier/状态码聚合，以及 60 个每分钟序列点。 |
-| `usage` | Token 的 `lifetime` 与 `last_hour` 统计。包含 `requests`、`reported`、`coverage`、总 Token 和按模型/Tier 聚合。 |
-| `upstream` | 上游请求级路由 `requests`、尝试级 `lifetime`、`last_hour` 与 `recent`。按 Tier、匿名/Key 通道、Key 尾码聚合。 |
-| `resources` | 模型目录、Key 冷却、脱敏代理节点、匿名开关和 models.dev metadata 状态。 |
+| 字段        | 内容                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `version`   | 当前程序版本。                                                                                                                 |
+| `metrics`   | 原有请求统计：进程启动时间、活跃请求/流、lifetime 与最近一小时成功率/延迟、端点/模型/Tier/状态码聚合，以及 60 个每分钟序列点。 |
+| `usage`     | Token 的 `lifetime` 与 `last_hour` 统计。包含 `requests`、`reported`、`coverage`、总 Token 和按模型/Tier 聚合。                |
+| `upstream`  | 上游请求级路由 `requests`、尝试级 `lifetime`、`last_hour` 与 `recent`。按 Tier、匿名/Key 通道、Key 尾码聚合。                  |
+| `resources` | 模型目录、Key 冷却、脱敏代理节点、匿名开关和 models.dev metadata 状态。                                                        |
 
 `usage.*.tokens` 与模型/Tier 项均包含 `input_tokens`、`output_tokens`、`cached_tokens`、`reasoning_tokens`、`total_tokens`。其中 `input_tokens` 统一表示包含缓存读写的总输入，`cached_tokens` 单独表示缓存读取量。`metrics.series` 的每分钟点也包含这些 Token 字段和 `usage_reported`。普通 JSON、同协议 SSE 与跨协议 SSE 响应都会解析上游 usage；`coverage` 是收到 usage 的推理请求数除以已建立上游路由的推理请求数。上游未提供 usage 时不会估算 Token。
 
@@ -87,11 +87,11 @@ lifetime 从当前进程启动开始；last hour 使用 60 个一分钟 Bucket�
 
 以下接口受管理 Session 保护；POST 还要求当前 CSRF Token，并按客户端每分钟最多 12 次限制：
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/debug/models` | 模型路由、原生协议、协议来源、Zen/Go 可用性、匿名资格/来源、成本与 metadata 状态。 |
-| `POST` | `/api/debug/inference` | 通过真实 Gateway 发起 Chat、Responses 或 Anthropic 非流式诊断请求。 |
-| `POST` | `/api/debug/chat` | 兼容旧版 Playground 的 Chat-only 入口，内部转发到通用诊断流程。 |
+| 方法   | 路径                   | 用途                                                                               |
+| ------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| `GET`  | `/api/debug/models`    | 模型路由、原生协议、协议来源、Zen/Go 可用性、匿名资格/来源、成本与 metadata 状态。 |
+| `POST` | `/api/debug/inference` | 通过真实 Gateway 发起 Chat、Responses 或 Anthropic 非流式诊断请求。                |
+| `POST` | `/api/debug/chat`      | 兼容旧版 Playground 的 Chat-only 入口，内部转发到通用诊断流程。                    |
 
 请求格式：
 
@@ -100,7 +100,7 @@ lifetime 从当前进程启动开始；last hour 使用 60 个一分钟 Bucket�
   "protocol": "chat",
   "request": {
     "model": "example-model",
-    "messages": [{"role": "user", "content": "Hello"}]
+    "messages": [{ "role": "user", "content": "Hello" }]
   }
 }
 ```
@@ -124,7 +124,6 @@ go build -o opencode2api ./cmd/opencode2api
 ## GHCR / Docker Compose 部署
 
 正式镜像发布在 `ghcr.io/henryz78/opencode2api`
-
 
 ```bash
 git clone https://github.com/henryz78/opencode2api.git
@@ -244,16 +243,16 @@ cp config.example.json config.json
 
 ### 基础字段
 
-| 字段 | 含义 |
-| --- | --- |
-| `listen` | 本地监听地址。默认建议使用 `127.0.0.1:8080`，避免服务直接暴露到公网。 |
-| `server_keys` | 调用本代理时使用的本地 API key 列表。它们只用于本地鉴权，不会发送给 OpenCode。 |
-| `zen_keys` | OpenCode Zen API key 池。允许配置多个 key。 |
-| `go_keys` | OpenCode Zen Go API key 池。没有 Go key 时可以使用空数组。 |
-| `anonymous` | 是否启用 Zen 匿名模式，默认 `false`。已知价格记录为零成本时进入匿名通道；metadata 暂不可用时保留名称含 `free` 的回退。 |
-| `prefer` | 模型同时存在于 Zen 与 Go 时认证 Key 的尝试顺序，值为 `go` 或 `zen`，默认 `go`。首选 Tier 失败后回退另一 Tier；仅存在于某一池时只尝试该池。 |
-| `proxyfile` | 可选代理池文件路径。相对路径以 `config.json` 所在目录为基准；内容会追加到 `proxies` 并去重。 |
-| `proxies` | 上游代理列表。支持 `direct`、`http://`、`https://`、`socks5://` 和 `socks5h://`。URL 可以包含代理用户名和密码。 |
+| 字段          | 含义                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `listen`      | 本地监听地址。默认建议使用 `127.0.0.1:8080`，避免服务直接暴露到公网。                                                                      |
+| `server_keys` | 调用本代理时使用的本地 API key 列表。它们只用于本地鉴权，不会发送给 OpenCode。                                                             |
+| `zen_keys`    | OpenCode Zen API key 池。允许配置多个 key。                                                                                                |
+| `go_keys`     | OpenCode Zen Go API key 池。没有 Go key 时可以使用空数组。                                                                                 |
+| `anonymous`   | 是否启用 Zen 匿名模式，默认 `false`。已知价格记录为零成本时进入匿名通道；metadata 暂不可用时保留名称含 `free` 的回退。                     |
+| `prefer`      | 模型同时存在于 Zen 与 Go 时认证 Key 的尝试顺序，值为 `go` 或 `zen`，默认 `go`。首选 Tier 失败后回退另一 Tier；仅存在于某一池时只尝试该池。 |
+| `proxyfile`   | 可选代理池文件路径。相对路径以 `config.json` 所在目录为基准；内容会追加到 `proxies` 并去重。                                               |
+| `proxies`     | 上游代理列表。支持 `direct`、`http://`、`https://`、`socks5://` 和 `socks5h://`。URL 可以包含代理用户名和密码。                            |
 
 `server_keys` 至少需要一个值。`anonymous` 为 `false` 时，`zen_keys` 和 `go_keys` 至少有一个池不能为空；启用匿名模式后两个上游 key 池可以同时为空。
 
@@ -317,27 +316,26 @@ socks5://127.0.0.1:1080  # 备用代理
 
 ### `upstream`
 
-| 字段 | 含义 |
-| --- | --- |
-| `upstream.zen` | Zen 上游根地址，通常保持为 `https://opencode.ai/zen`。 |
-| `upstream.go` | Zen Go 上游根地址，通常保持为 `https://opencode.ai/zen/go`。 |
+| 字段           | 含义                                                         |
+| -------------- | ------------------------------------------------------------ |
+| `upstream.zen` | Zen 上游根地址，通常保持为 `https://opencode.ai/zen`。       |
+| `upstream.go`  | Zen Go 上游根地址，通常保持为 `https://opencode.ai/zen/go`。 |
 
 ### `retry`
 
-| 字段 | 含义 |
-| --- | --- |
-| `retry.max_attempts` | 每个认证 Key Tier 的最大尝试次数，包含第一次请求。Tier 内部遇到网络错误、认证失败、限流或 5xx 会切换节点；其他 4xx 会结束当前 Tier。只要还有另一个可用 Tier，当前 Tier 的最终失败会继续按 `prefer` 顺序回退。anonymous 不使用此上限，而是将每个当前可用 proxy 各尝试一次。 |
-| `retry.timeout_seconds` | 单个客户端请求的总超时时间，同时用于限制上游响应头等待时间。 |
+| 字段                    | 含义                                                                                                                                                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `retry.max_attempts`    | 每个认证 Key Tier 的最大尝试次数，包含第一次请求。Tier 内部遇到网络错误、认证失败、限流或 5xx 会切换节点；其他 4xx 会结束当前 Tier。只要还有另一个可用 Tier，当前 Tier 的最终失败会继续按 `prefer` 顺序回退。anonymous 不使用此上限，而是将每个当前可用 proxy 各尝试一次。 |
+| `retry.timeout_seconds` | 单个客户端请求的总超时时间，同时用于限制上游响应头等待时间。                                                                                                                                                                                                               |
 
 流式响应一旦已经向客户端输出数据，就不会切换节点重新生成，避免拼接两个不同的响应。
 
 ### `models`
 
-| 字段 | 含义 |
-| --- | --- |
-| `models.refresh_seconds` | 重新读取 Zen 和 Go 模型列表及 OpenCode 能力目录的间隔秒数。两个模型列表与能力目录会并发刷新。 |
-| `models.protocols` | 手动指定模型的原生协议。值只能是 `chat`、`responses` 或 `anthropic`，并覆盖自动同步结果。通常保持为空。 |
-
+| 字段                     | 含义                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `models.refresh_seconds` | 重新读取 Zen 和 Go 模型列表及 OpenCode 能力目录的间隔秒数。两个模型列表与能力目录会并发刷新。           |
+| `models.protocols`       | 手动指定模型的原生协议。值只能是 `chat`、`responses` 或 `anthropic`，并覆盖自动同步结果。通常保持为空。 |
 
 模型协议覆盖示例：
 
@@ -370,34 +368,34 @@ socks5://127.0.0.1:1080  # 备用代理
 
 ### `performance`
 
-| 字段 | 含义 |
-| --- | --- |
-| `performance.max_idle_conns` | 所有上游连接池允许保留的最大空闲连接数。 |
-| `performance.max_idle_conns_per_host` | 每个上游主机允许保留的最大空闲连接数。 |
-| `performance.max_conns_per_host` | 每个主机的最大并发连接数。`0` 表示不设置上限。 |
-| `performance.idle_conn_timeout_seconds` | 空闲连接在连接池中保留的时间。 |
-| `performance.connect_timeout_seconds` | 与上游或代理建立 TCP 连接的超时时间。 |
-| `performance.failure_cooldown_seconds` | 连接失败、认证失败、限流或 5xx 后节点的基础冷却时间。连续失败会指数增加冷却时间。 |
+| 字段                                    | 含义                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------------- |
+| `performance.max_idle_conns`            | 所有上游连接池允许保留的最大空闲连接数。                                          |
+| `performance.max_idle_conns_per_host`   | 每个上游主机允许保留的最大空闲连接数。                                            |
+| `performance.max_conns_per_host`        | 每个主机的最大并发连接数。`0` 表示不设置上限。                                    |
+| `performance.idle_conn_timeout_seconds` | 空闲连接在连接池中保留的时间。                                                    |
+| `performance.connect_timeout_seconds`   | 与上游或代理建立 TCP 连接的超时时间。                                             |
+| `performance.failure_cooldown_seconds`  | 连接失败、认证失败、限流或 5xx 后节点的基础冷却时间。连续失败会指数增加冷却时间。 |
 
 ### `logging`
 
-| 字段 | 含义 |
-| --- | --- |
-| `logging.level` | 日志级别，支持 `debug`、`info`、`warn` 和 `error`，可通过 WebUI 热切换。 |
+| 字段                | 含义                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `logging.level`     | 日志级别，支持 `debug`、`info`、`warn` 和 `error`，可通过 WebUI 热切换。 |
 | `logging.ring_size` | WebUI 最近日志环容量，范围 100–50000，默认 2000。stdout 不受此容量限制。 |
 
 每条 stdout 日志都是单行 JSON，包含时间、级别、组件、事件以及适用的 request ID、模型、tier、状态码、耗时、重试次数和实际使用的 Key 尾码。已建立上游路由的请求会以 `info` 级别记录 `request_routed` 事件；真实 Key 只显示最后 5 个字符，anonymous 请求显示为 `anonymous`。普通“请求完成”事件仍使用 `debug` 级别；警告和错误按原级别输出。日志不会输出完整上游 key、本地 key、Authorization、Cookie、代理认证信息或请求消息正文。
 
 ### `webui`
 
-| 字段 | 含义 |
-| --- | --- |
-| `webui.enabled` | 是否在独立端口启动管理服务。旧配置未包含该段时默认关闭。 |
-| `webui.listen` | 管理服务监听地址，示例为 `0.0.0.0:8081`。 |
-| `webui.username` | 单一管理员账号。 |
-| `webui.password` | 仅用于首次初始化的明文密码，至少 10 个字符；启动后自动删除。 |
-| `webui.password_hash` | 自动生成的 Argon2id 哈希，不应手动编辑，也不会由 WebUI API 返回。 |
-| `webui.session_ttl_minutes` | 登录 session 有效时间，范围 5–10080 分钟。 |
+| 字段                        | 含义                                                              |
+| --------------------------- | ----------------------------------------------------------------- |
+| `webui.enabled`             | 是否在独立端口启动管理服务。旧配置未包含该段时默认关闭。          |
+| `webui.listen`              | 管理服务监听地址，示例为 `0.0.0.0:8081`。                         |
+| `webui.username`            | 单一管理员账号。                                                  |
+| `webui.password`            | 仅用于首次初始化的明文密码，至少 10 个字符；启动后自动删除。      |
+| `webui.password_hash`       | 自动生成的 Argon2id 哈希，不应手动编辑，也不会由 WebUI API 返回。 |
+| `webui.session_ttl_minutes` | 登录 session 有效时间，范围 5–10080 分钟。                        |
 
 WebUI 中普通配置响应只包含 key 尾码/指纹及脱敏 proxy；运行桌面和路由诊断会显示每个请求最终使用的 Key 最后 5 个字符或 `anonymous`。需要查看完整值时必须再次输入管理密码，敏感响应禁止浏览器缓存。
 
@@ -406,7 +404,6 @@ WebUI 中普通配置响应只包含 key 尾码/指纹及脱敏 proxy；运行�
 WebUI 保存时先解析并验证完整候选配置、创建新的连接池和 Gateway，然后写入临时文件、保留 `config.json.bak` 并替换 `config.json`，最后原子切换新请求使用的运行实例。写入或初始化失败时旧实例继续工作；切换前已开始的请求不会中断。
 
 keys、proxy、上游、重试、模型、性能、优先 tier 和日志级别会立即生效。`listen`、`webui.listen` 与 `webui.enabled` 会保存但需要重启进程。WebUI 也提供“从磁盘重载”，外部编辑后的配置仍会经过相同的验证与回滚流程。保存后的 JSON 会被规范化，原有注释不会保留。
-
 
 ## 会话 ID
 
