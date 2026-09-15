@@ -19,6 +19,9 @@ func PrepareRequest(from, to Protocol, input map[string]any, upstreamURL string)
 	if err != nil {
 		return nil, err
 	}
+	if to == Chat {
+		normalizeChatNullContent(output)
+	}
 	normalizeToolReasoningHistory(to, jsonutil.StringAt(output, "model"), upstreamURL, output)
 	return output, nil
 }
@@ -119,6 +122,27 @@ func normalizeChatToolReasoningHistory(input map[string]any) bool {
 		}
 		message["reasoning_content"] = reasoning
 		changed = true
+	}
+	return changed
+}
+
+// normalizeChatNullContent ensures Chat messages do not carry null content.
+// Providers such as Xiaomi MiMo reject a null message content value with 400.
+func normalizeChatNullContent(input map[string]any) bool {
+	messages, ok := input["messages"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		if message["content"] == nil {
+			message["content"] = ""
+			changed = true
+		}
 	}
 	return changed
 }
@@ -523,7 +547,7 @@ func encodeChatRequest(request bridgeRequest) (map[string]any, error) {
 			if len(results) > 0 {
 				return nil, fmt.Errorf("messages[%d]: assistant message contains tool results", i)
 			}
-			encoded := map[string]any{"role": "assistant", "content": nil}
+			encoded := map[string]any{"role": "assistant", "content": ""}
 			if value, ok := bridgeReasoningText(reasoning); ok {
 				encoded["reasoning_content"] = value
 			}
@@ -691,12 +715,15 @@ func encodeResponsesRequest(request bridgeRequest) map[string]any {
 		for _, block := range message.Blocks {
 			switch block.Kind {
 			case "reasoning":
-				flushContent()
 				// Only replay reasoning the upstream actually issued. A block
 				// that arrived as plain text (Chat/Anthropic history) has no
 				// server-side id, and synthesizing one guarantees a stale
 				// reasoning-reference rejection, which previously forced every
 				// such turn through the strip-and-retry path.
+				if block.Text == "" && block.Encrypted == "" && block.ID == "" {
+					continue
+				}
+				flushContent()
 				if item, ok := encodeResponsesReasoningInput(block); ok {
 					items = append(items, item)
 				}

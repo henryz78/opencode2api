@@ -89,17 +89,32 @@ func (p *anonymousPool) CursorFor(affinity string) anonymousCursor {
 }
 
 // Next visits each healthy, non-cooling proxy at most once per cursor.
+// If all healthy proxies are cooling, use the earliest cooldown so a
+// single-proxy deployment is not hard-blocked.
 func (c *anonymousCursor) Next() *anonymousNode {
 	if c.pool == nil || len(c.pool.nodes) == 0 {
 		return nil
 	}
 	now := time.Now().UnixNano()
+	choice := -1
+	var earliest int64
 	for c.offset < len(c.pool.nodes) {
-		node := c.pool.nodes[(c.start+c.offset)%len(c.pool.nodes)]
+		idx := (c.start + c.offset) % len(c.pool.nodes)
+		node := c.pool.nodes[idx]
 		c.offset++
-		if node.proxy.healthy.Load() && node.cooldownUntil.Load() <= now {
+		if !node.proxy.healthy.Load() {
+			continue
+		}
+		until := node.cooldownUntil.Load()
+		if until <= now {
 			return node
 		}
+		if choice == -1 || until < earliest {
+			choice, earliest = idx, until
+		}
+	}
+	if choice >= 0 {
+		return c.pool.nodes[choice]
 	}
 	return nil
 }

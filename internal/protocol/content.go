@@ -136,7 +136,7 @@ func decodeChatReasoning(message map[string]any) []bridgeBlock {
 		value, exists = message["reasoning"]
 	}
 	text, ok := value.(string)
-	if !exists || !ok {
+	if !exists || !ok || strings.TrimSpace(text) == "" {
 		return nil
 	}
 	return []bridgeBlock{{
@@ -184,14 +184,17 @@ func encodeResponsesReasoningInput(block bridgeBlock) (map[string]any, bool) {
 
 func encodeResponsesReasoning(block bridgeBlock, completed bool) map[string]any {
 	id := block.ID
-	if id == "" {
+	if id == "" && completed {
 		id = identity.RandomID("rs", 12)
 	}
 	summary := []any{}
 	if block.Text != "" {
 		summary = append(summary, map[string]any{"type": "summary_text", "text": block.Text})
 	}
-	item := map[string]any{"id": id, "type": "reasoning", "summary": summary}
+	item := map[string]any{"type": "reasoning", "summary": summary}
+	if id != "" {
+		item["id"] = id
+	}
 	if block.Encrypted != "" {
 		item["encrypted_content"] = block.Encrypted
 	}
