@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -219,6 +220,20 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			wire.WriteError(w, external, http.StatusBadGateway, "failed to read upstream response", "upstream_error", ids.Request)
 			return
 		}
+		if upstreamRoute.Anonymous || (meta != nil && meta.Shaped) {
+			// Key-tier shaped requests were force-streamed like the
+			// anonymous lane; collapse the same way.
+			// The anonymous lane is served streaming (see forceStreamBody);
+			// collapse the events back into the single document this
+			// non-streaming client asked for.
+			collapsed, err := wire.CollapseStream(bytes.NewReader(responseBody), upstreamRoute.Protocol, model)
+			if err != nil {
+				g.logger.Warn("anonymous stream collapse failed", "component", "conversion", "event", "anonymous_collapse_failed", "request_id", ids.Request, "model", model, "source_protocol", upstreamRoute.Protocol, "error", err)
+				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)
+				return
+			}
+			responseBody = collapsed
+		}
 		if usage, reported := wire.ResponseUsage(upstreamRoute.Protocol, responseBody); meta != nil {
 			meta.Usage, meta.UsageReported = usage, reported
 		}
@@ -270,6 +285,9 @@ func (g *Gateway) prepareRouteBodies(from wire.Protocol, route models.Route, inp
 				continue
 			}
 			return nil, fmt.Errorf("prepare %s upstream request: %w", tier, err)
+		}
+		if effort := g.cfg.ForcedEffort(jsonutil.StringAt(upstreamPayload, "model")); effort != "" {
+			wire.ForcedEffort(protocol, upstreamPayload, effort)
 		}
 		encoded, err := json.Marshal(upstreamPayload)
 		if err != nil {

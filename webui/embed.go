@@ -5,7 +5,7 @@ import (
 	"embed"
 )
 
-// Assets contains the Field Manual management interface served by the admin listener.
+// Assets contains the static management interface served by the admin listener.
 //
-//go:embed index.html
+//go:embed index.html app.js styles.css
 var Assets embed.FS

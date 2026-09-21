@@ -3,7 +3,6 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -161,27 +160,6 @@ func (a *Server) handleDebugInference(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, result)
-}
-
-func (a *Server) handleDebugChat(w http.ResponseWriter, r *http.Request) {
-	var requestPayload map[string]any
-	if err := decodeAdminJSON(w, r, &requestPayload); err != nil {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if requestPayload == nil {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request must be a JSON object")
-		return
-	}
-	encoded, err := json.Marshal(DebugInferenceRequest{Protocol: protocol.Chat, Request: requestPayload})
-	if err != nil {
-		writeAdminError(w, http.StatusBadRequest, "invalid_request", "request contains unsupported JSON values")
-		return
-	}
-	clone := r.Clone(r.Context())
-	clone.Body = io.NopCloser(bytes.NewReader(encoded))
-	clone.ContentLength = int64(len(encoded))
-	a.handleDebugInference(w, clone)
 }
 
 type debugResponseRecorder struct {
