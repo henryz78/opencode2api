@@ -19,9 +19,12 @@ const (
 	CapabilitiesURL = "https://models.opencode.ai/api.json"
 	ZenDocsURL      = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx"
 	GoDocsURL       = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
+	// LegacyZenBase is the console origin that still serves the anonymous
+	// models listing after chat traffic moved to the inference backend.
+	LegacyZenBase = "https://opencode.ai/zen"
 )
 
-var protocolDocEndpointPattern = regexp.MustCompile("\\|[^|]+\\|\\s*`?([^|`\\s]+)`?\\s*\\|\\s*`[^`]+/v1/(chat/completions|responses|messages)`")
+var protocolDocEndpointPattern = regexp.MustCompile("\\|[^|]+\\|\\s*`?([^|`\\s]+)`?\\s*\\|\\s*`[^`]+/v1/(chat/completions|responses|messages|systemone)`")
 
 type Capabilities struct {
 	Protocols   map[config.Tier]map[string]wire.Protocol
@@ -210,6 +213,8 @@ func FetchProtocolDocs(ctx context.Context, client *http.Client, endpoint string
 			protocol = wire.Responses
 		case "messages":
 			protocol = wire.Anthropic
+		case "systemone":
+			protocol = wire.SystemOne
 		}
 		if protocol != "" {
 			result[modelID] = protocol
