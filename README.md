@@ -1,6 +1,6 @@
 # opencode2api
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md)
 
 A Go gateway for **OpenCode Zen and Zen Go**. It exposes Chat Completions, Responses, and Anthropic Messages endpoints, translates between their native protocols, and manages upstream keys and proxies.
 
@@ -202,6 +202,8 @@ Allowed protocol values are `chat`, `responses`, and `anthropic`. Models using u
 
 Cost, deprecation, and model limits come from the official [OpenCode metadata endpoint](https://models.opencode.ai/api.json), refreshed every 24 hours. OpenCode's capability catalog remains authoritative for context and token limits; metadata `limit.context`, `limit.input`, and `limit.output` fill fields missing from that catalog. These limits are exposed by `/v1/models` as `context_window`/`context_length`, `max_input`, and `max_output` for discovery clients such as CLIProxyAPI and Pi. Metadata requests use a 30-second timeout per HTTP client. Refresh failures retain existing data.
 
+Each `/v1/models` entry also carries `cost` (USD per million tokens: `input`, `output`, `cache_read`, `cache_write`, plus OpenClaw's `cacheRead`/`cacheWrite`) when the metadata states a price. Reasoning models list their levels in `reasoning_efforts` and in OpenClaw's `compat.supportedReasoningEfforts`: `minimal` through `max`, capped at the probed ceiling when the model's effort is `auto`. A forced or probed level is reported as `default_reasoning_effort`. Cache prices appear after the next metadata refresh.
+
 ### Anonymous access and fallback
 
 With `anonymous: true`, eligibility for the anonymous lane is determined in this order:
@@ -210,6 +212,8 @@ With `anonymous: true`, eligibility for the anonymous lane is determined in this
 - While metadata is pending or does not describe the model, an ID containing `free` (case-insensitively) is the compatibility fallback.
 
 Eligibility is a routing decision; the upstream can still reject or rate-limit the request. Anonymous requests use `public` in the upstream authentication header.
+
+For each anonymous proxy, the legacy `/zen/v1` lane is tried first, followed by the configured `/inference` lane. Each lane uses its own headers and tool definitions; a client's read-tool name is restored in returned tool calls when the legacy lane requires an alias.
 
 The routing sequence is:
 
@@ -222,6 +226,8 @@ Anonymous attempts are not cut short by `retry.max_attempts`, but all attempts s
 Requests are encoded for each tier's own protocol. With `performance.first_event_timeout_seconds` enabled, a successful SSE response is held until the first complete data event. A timeout or disconnect before that event uses the existing key/proxy retry budget; comments do not satisfy the timeout. Once released downstream, the stream is never replayed. The default is `0` (disabled); try `15` seconds for upstreams that accept requests but send no events. This bounds the first event, not the first text token, and does not apply to System One. Rotation aliases use their separate `rotation.first_output_seconds` timeout. A recognized stale Responses reasoning reference can trigger one repair pass; selected-key diagnostics never use that replay.
 
 When only anonymous access is configured, `/v1/models` exposes only models eligible for that lane.
+
+Free models never need a Zen key: with `anonymous: true` they are served by the public lane, and a configured key is only their fallback. To keep keys but expose free models only, set `models.free_only: true`. Paid models then disappear from `/v1/models`, direct requests for them are rejected, and rotation aliases keep only free members; free models may still fall back to the configured keys.
 
 ### Free model availability
 
@@ -245,7 +251,7 @@ A stable session hash selects the preferred key or anonymous proxy. Send an expl
 
 Without an explicit ID, the first user message is used as a seed. Conversations beginning with the same content can therefore share affinity. Changing pool membership can change the selected node.
 
-Cooldowns grow exponentially up to eight times `performance.failure_cooldown_seconds`, and a longer `Retry-After` is honored. If every authenticated key is cooling down, routing may try the key whose cooldown ends first. If all healthy anonymous proxies are cooling down, routing may try the proxy whose cooldown ends first.
+Cooldowns grow exponentially up to eight times `performance.failure_cooldown_seconds`. Authenticated keys honor a longer `Retry-After` in full; anonymous cooldowns cap it at the same eight-times limit, and proxy recovery clears their failure state. If every authenticated key is cooling down, routing may try the key whose cooldown ends first. If all static anonymous proxies are cooling down or unhealthy, routing may try an untried proxy, preferring healthy ones and the earliest cooldown.
 
 ## Configuration reference
 
@@ -266,6 +272,7 @@ See [config.example.json](config.example.json) for a complete starting configura
 | `proxyfile`                 | Optional; relative paths resolve beside the configuration file.             |
 | `models.refresh_seconds`    | `300`; minimum 1.                                                           |
 | `models.protocols`          | `{}`; per-model native protocol overrides.                                  |
+| `models.free_only`          | `false`; expose and route only free models, even with Zen or Go keys.       |
 | `reasoning.effort`          | Empty (off); `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `none`. |
 | `reasoning.effort_by_model` | `{}`; per-model overrides of `reasoning.effort`.                            |
 
@@ -315,13 +322,34 @@ direct
 
 Comment markers are `#`, `;`, and `//` at the start of a line or after whitespace.
 
+#### Rotating proxy pools
+
+Suffix an entry with `#pool` (or prefix it with `pool+`) to declare that the endpoint is a rotating proxy pool such as [Resin](https://github.com/Resinat/Resin), where every new TCP connection exits from a different IP:
+
+```text
+http://127.0.0.1:7890#pool
+socks5://127.0.0.1:1080#pool
+pool+http://127.0.0.1:7891
+```
+
+A pool entry is handled differently from a static proxy:
+
+| Behavior                  | Static proxy                                                        | `#pool` entry                                                                |
+| ------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Connection reuse          | Keep-alive plus HTTP/2 multiplexing (`performance.*` pool settings) | A fresh TCP + CONNECT tunnel per request (`DisableKeepAlives`, no HTTP/2)    |
+| Failure cooldown          | 15s–120s exponential backoff, inflated by `Retry-After`             | None: the next request simply draws a new exit IP                             |
+| Health eviction           | Marked unhealthy, keys rebound, rechecked every 15 minutes          | Never evicted; the health check is skipped entirely                           |
+| Anonymous lane retries    | At most one attempt per configured proxy                            | Up to `retry.max_attempts`, cycling the pool entry                            |
+
+Use it when the endpoint behind the URL already performs the rotation and the pool's own exit IPs are individually rate-limited or flaky; the gateway then treats each attempt as a fresh endpoint instead of pinning the conversation to one exit. A single `#pool` entry is enough — you no longer need to list dozens of exits. Static entries keep the pooling behavior described below.
+
 ### Timeouts and connection pools
 
 | Field                                   | Default | Meaning                                                |
 | --------------------------------------- | ------- | ------------------------------------------------------ |
 | `retry.max_attempts`                    | `3`     | Attempts per authenticated tier, including the first.  |
 | `retry.timeout_seconds`                 | `300`   | Total inference timeout, including stream consumption. |
-| `performance.attempt_timeout_seconds`   | `0`     | Header wait per attempt; 0 uses the request timeout.   |
+| `performance.attempt_timeout_seconds`   | `0`     | Whole-attempt bound; 0 uses the request timeout.       |
 | `performance.connect_timeout_seconds`   | `5`     | Connection establishment timeout.                      |
 | `performance.failure_cooldown_seconds`  | `15`    | Base failure cooldown.                                 |
 | `performance.max_idle_conns`            | `2048`  | Idle connection limit per proxy transport.             |
@@ -385,6 +413,17 @@ The server forces `stream: false`. Use `{"mode":"selected","tier":"zen","id":"KE
 
 After execution, the management endpoint returns HTTP 200 with the actual result in `ok`, `http_status`, `request_id`, `route`, and `response`. Selected-key results also include `selected_key` and `key_test`: `usable`, `rejected`, `rate_limited`, `transport_error`, `upstream_error`, `request_error`, or `unavailable`. Invalid management input, authentication, CSRF, and throttling retain their own HTTP error statuses.
 
+### Interface language
+
+The WebUI loads its translations from `webui/js/i18n.js`. It ships with **简体中文** (default), **English**, and **Tiếng Việt**. The original Simplified Chinese copy lives in `index.html` and `webui/js/` and stays the fallback for every string without a translation, so adding a language never rewrites the original.
+
+- The selector sits in the topbar, and on the login card.
+- The choice is stored in `localStorage` under `opencode2api.ui.lang`.
+- Switching re-renders both static text (`data-i18n`, `data-i18n-attr`) and JavaScript-generated text without reloading the page.
+- Dates and times follow the selected locale as well.
+
+To add a language, add one block to `DICTIONARY` in `webui/js/i18n.js`, then register its code in `SUPPORTED`, `LABELS`, and `DATE_LOCALES`.
+
 ### Saving and reloading
 
 The server validates a candidate configuration and builds its replacement gateway before saving and switching. Failed validation or persistence leaves the active gateway in place. Requests already running continue on their original gateway.
@@ -397,7 +436,7 @@ Request outcomes describe the completed inference. A failed SSE response or trun
 
 Upstream **attempt** records measure the HTTP exchange through receipt of response headers. Their success and latency are separate from completion of the full JSON body or stream.
 
-Token statistics use reported usage only. Input tokens include cache reads and writes; cached tokens separately count cache reads. Missing usage is not estimated, and coverage shows how many routed inference requests reported usage.
+Token statistics use reported usage only. Input tokens include cache reads and writes; cached tokens separately count cache reads. Missing usage is not estimated, and coverage shows how many routed inference requests reported usage. `usage.server_keys` splits requests and tokens by the local server key the caller authenticated with (its fingerprint, as shown in `/api/api-keys`); Playground traffic is counted under `playground`.
 
 | Data                                                      | Storage / retention                                                                          |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -439,10 +478,10 @@ internal/
   protocol/              Request/response conversion and SSE parsing/output
   telemetry/             Request tracking, metrics, logs, and recovery
 webui/
-  embed.go               Embeds the three static assets into the executable
+  embed.go               Embeds the static assets into the executable
   index.html             Page structure
-  app.js                 UI behavior
-  styles.css             UI styles
+  css/                   Design tokens, base styles, components and page layouts
+  js/                    ES modules: shell, i18n, shared helpers and one module per page
 ```
 
 Suggested reading order:
@@ -450,7 +489,7 @@ Suggested reading order:
 1. [Command entry](cmd/opencode2api/main.go) → [runtime management](internal/gateway/runtime.go) → [HTTP handlers](internal/gateway/gateway.go).
 2. [Upstream attempts](internal/gateway/upstream.go) and [model routing](internal/models/catalog.go) explain how a request reaches a provider.
 3. [Request conversion](internal/protocol/request.go), [response conversion](internal/protocol/response.go), and [stream transport](internal/protocol/stream.go) cover protocol behavior.
-4. [Management routes](internal/admin/server.go) and [WebUI logic](webui/app.js) cover configuration and diagnostics.
+4. [Management routes](internal/admin/server.go) and [WebUI logic](webui/js/main.js) cover configuration and diagnostics.
 
 Run Go formatting, analysis, and the command build:
 
@@ -465,10 +504,10 @@ For local development, start the service with `go run ./cmd/opencode2api -config
 Node.js is only needed for the WebUI JavaScript syntax check:
 
 ```bash
-node --check webui/app.js
+for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet` and builds with Go 1.24 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include both READMEs.
+`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet` and builds with Go 1.24 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include all three READMEs.
 
 ## Troubleshooting
 

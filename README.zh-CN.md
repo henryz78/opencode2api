@@ -1,6 +1,6 @@
 # opencode2api
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md)
 
 使用 Go 编写的 **OpenCode Zen / Zen Go API 网关**。对外提供 Chat Completions、Responses 和 Anthropic Messages 接口，按上游原生协议转换请求，并统一管理上游 Key 与代理。
 
@@ -202,6 +202,8 @@ System One 将自由文本状态与类型化问题配对，并返回类型化答
 
 成本、弃用信息及模型限制来自官方 [OpenCode 元数据地址](https://models.opencode.ai/api.json)，每 24 小时刷新一次。能力目录中的限制优先；元数据中的 `limit.context`、`limit.input` 和 `limit.output` 仅补充缺失字段，通过 `/v1/models` 的 `context_window` / `context_length`、`max_input`、`max_output` 暴露。每个 HTTP 客户端的拉取超时为 30 秒，刷新失败时保留已有数据。升级后继续兼容原有 `.models.dev.json` 缓存文件名，无需删除缓存。
 
+元数据给出价格时，`/v1/models` 的每个条目还会带上 `cost`（每百万 token 的美元价格：`input`、`output`、`cache_read`、`cache_write`，以及 OpenClaw 使用的 `cacheRead` / `cacheWrite`）。推理模型会在 `reasoning_efforts` 和 OpenClaw 读取的 `compat.supportedReasoningEfforts` 中列出可用档位：`minimal` 到 `max`；思考强度为 `auto` 时截止到探测得到的上限。强制或探测得到的档位通过 `default_reasoning_effort` 给出。缓存价格字段会在下一次元数据刷新后出现。
+
 ### 匿名通道与回退
 
 启用 `anonymous: true` 后，按以下顺序判断匿名资格：
@@ -210,6 +212,8 @@ System One 将自由文本状态与类型化问题配对，并返回类型化答
 - 元数据未就绪或没有该模型记录时，才使用 ID 包含 `free`（不区分大小写）的兼容回退。
 
 这只是网关的路由判断，上游仍可能拒绝或限制请求。匿名请求在上游认证头中使用 `public` 凭证。
+
+每个匿名代理先尝试旧版 `/zen/v1`，失败后再尝试配置的 `/inference`。两个通道分别使用匹配的请求头与工具定义；旧通道需要重命名客户端的读取工具时，返回的工具调用会恢复客户端原名。
 
 路由顺序：
 
@@ -222,6 +226,8 @@ System One 将自由文本状态与类型化问题配对，并返回类型化答
 每个 Tier 使用自己的原生协议编码请求。启用 `performance.first_event_timeout_seconds` 后，会先等待完整的 SSE data 事件再向客户端交付响应；注释心跳不算首事件。首事件前超时或断开会沿用现有 Key / 代理重试预算，交付后不再重放。默认 `0` 关闭，可对接受请求后无事件的上游尝试设置为 `15` 秒。它限制首事件而非首个文本 token，不适用于 System One；轮转别名使用独立的 `rotation.first_output_seconds`。识别到过期的 Responses reasoning 引用时，可执行一次修复重试；指定 Key 的诊断不会执行该重试。
 
 只有匿名通道可用时，`/v1/models` 仅展示符合匿名条件的模型。
+
+免费模型不需要 Zen Key：启用 `anonymous: true` 后由匿名通道提供，已配置的 Key 只作为回退。如果想保留 Key 但只暴露免费模型，设置 `models.free_only: true`：付费模型不再出现在 `/v1/models`，直接请求会被拒绝，轮转别名只保留免费成员；免费模型仍可回退到已配置的 Key。
 
 ### 免费模型可用性
 
@@ -245,7 +251,7 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 
 没有显式会话 ID 时，使用第一条用户消息生成会话标识，因此开场内容相同的会话可能共享亲和性。调整 Key 或代理池成员后，原有会话选择的节点可能变化。
 
-失败冷却按指数增长，最高为 `performance.failure_cooldown_seconds` 的八倍；如果上游的 `Retry-After` 更长，则使用更长时间。所有认证 Key 都处于冷却时，路由仍可能尝试最早结束冷却的 Key；所有健康匿名代理都处于冷却时，也会尝试最早结束冷却的代理。
+失败冷却按指数增长，最高为 `performance.failure_cooldown_seconds` 的八倍。认证 Key 完整遵守更长的 `Retry-After`；匿名通道将其限制在同样的八倍上限内，代理恢复时还会清除匿名失败状态。所有认证 Key 都处于冷却时，路由仍可能尝试最早结束冷却的 Key；所有静态匿名代理都处于冷却或异常状态时，则在本次尚未尝试的代理中优先选择健康且最早结束冷却的节点。
 
 ## 配置参考
 
@@ -266,6 +272,7 @@ Key 初始化时均衡分配到代理。真实流量可以触发代理检查、K
 | `proxyfile`                 | 可选；相对路径基于配置文件所在目录解析。                                              |
 | `models.refresh_seconds`    | `300`；最小为 1。                                                                     |
 | `models.protocols`          | `{}`；按模型 ID 覆盖原生协议。                                                        |
+| `models.free_only`          | `false`；即使配置了 Zen / Go Key，也只暴露和路由免费模型。                            |
 | `reasoning.effort`          | 空（关闭）；可选 `auto`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`none`。 |
 | `reasoning.effort_by_model` | `{}`；按模型 ID 覆盖 `reasoning.effort`。                                             |
 
@@ -310,13 +317,34 @@ direct
 
 支持 `#`、`;`、`//` 注释标记，标记需要位于行首或空白字符之后。
 
+#### 轮换代理池
+
+在条目末尾追加 `#pool`（或在开头加 `pool+`）即可声明该地址是轮换代理池（例如 [Resin](https://github.com/Resinat/Resin)），每次新建 TCP 连接都会从不同出口 IP 发出：
+
+```text
+http://127.0.0.1:7890#pool
+socks5://127.0.0.1:1080#pool
+pool+http://127.0.0.1:7891
+```
+
+代理池条目的处理方式与静态代理完全不同：
+
+| 行为         | 静态代理                                    | `#pool` 条目                                              |
+| ------------ | ------------------------------------------- | --------------------------------------------------------- |
+| 连接复用     | Keep-alive + HTTP/2 多路复用（`performance.*` 连接池参数） | 每次请求新建 TCP + CONNECT 隧道（`DisableKeepAlives`，禁用 HTTP/2） |
+| 失败冷却     | 15s–120s 指数退避，并受 `Retry-After` 影响  | 无冷却：下一次请求直接换一个新出口 IP                     |
+| 可用性剔除   | 标记不可用、迁移 Key、每 15 分钟复检        | 永不剔除，完全跳过健康检查                                |
+| 匿名通道重试 | 每个配置的代理最多尝试一次                  | 最多尝试 `retry.max_attempts` 次，循环该池条目            |
+
+当 URL 背后的服务本身就在做轮换、而池内出口 IP 会被单独限流或不稳定时使用它：网关会把每次尝试都当作新出口，而不是把整个会话固定在某个出口上。只要一条 `#pool` 条目即可，无需再罗列几十个出口。静态条目仍然保留下文的连接池行为。
+
 ### 超时与连接池
 
 | 字段                                    | 默认值 | 含义                                             |
 | --------------------------------------- | ------ | ------------------------------------------------ |
 | `retry.max_attempts`                    | `3`    | 每个认证 Tier 的尝试次数，包含首次请求。         |
 | `retry.timeout_seconds`                 | `300`  | 推理请求总超时，包含流式响应读取。               |
-| `performance.attempt_timeout_seconds`   | `0`    | 每次尝试等待响应头的超时；0 表示使用请求总超时。 |
+| `performance.attempt_timeout_seconds`   | `0`    | 单次尝试的总超时；0 表示使用请求总超时。         |
 | `performance.connect_timeout_seconds`   | `5`    | 建立连接的超时。                                 |
 | `performance.failure_cooldown_seconds`  | `15`   | 失败冷却基数。                                   |
 | `performance.max_idle_conns`            | `2048` | 每个代理 Transport 的空闲连接上限。              |
@@ -380,6 +408,17 @@ Playground 需要已登录的 Session 和 `X-CSRF-Token`，每个客户端 IP �
 
 执行后，管理接口返回 HTTP 200，实际结果位于 `ok`、`http_status`、`request_id`、`route` 和 `response`。指定 Key 时还返回 `selected_key` 与 `key_test`，其值包括 `usable`、`rejected`、`rate_limited`、`transport_error`、`upstream_error`、`request_error`、`unavailable`。管理请求格式、认证、CSRF 和限速错误仍返回各自对应的 HTTP 状态。
 
+### 界面语言
+
+WebUI 从 `webui/js/i18n.js` 加载翻译，内置 **简体中文**（默认）、**English** 和 **Tiếng Việt**。原始简体中文文案保留在 `index.html` 和 `webui/js/` 中，并始终作为缺少翻译时的回退，因此新增语言不会覆盖原文。
+
+- 语言选择器位于顶部工具栏右侧，登录卡片上也有一个。
+- 选择结果保存在 `localStorage`，键名为 `opencode2api.ui.lang`。
+- 切换语言会同时重绘静态文案（`data-i18n`、`data-i18n-attr`）和 JavaScript 生成的文案，无需刷新页面。
+- 日期时间格式跟随所选语言。
+
+新增语言时，在 `webui/js/i18n.js` 的 `DICTIONARY` 中增加一个语言块，并在 `SUPPORTED`、`LABELS` 和 `DATE_LOCALES` 中登记其代码。
+
 ### 保存与重载
 
 服务先验证候选配置并创建新的 Gateway，然后保存配置并切换实例。验证或保存失败时，当前 Gateway 继续处理请求；已经开始的请求继续使用原有实例。
@@ -392,7 +431,7 @@ Key、代理、上游地址、重试、模型、日志和路由偏好立即对�
 
 上游**尝试记录**统计的是收到响应头为止的 HTTP 交互，其成功状态和耗时与完整 JSON 响应或流的最终完成情况分开计算。
 
-Token 统计仅使用上游报告的 usage。输入 Token 包含缓存读取和写入，缓存 Token 单独统计缓存读取量。缺失 usage 时不估算 Token，覆盖率表示已经建立路由的推理请求中有多少报告了 usage。
+Token 统计仅使用上游报告的 usage。输入 Token 包含缓存读取和写入，缓存 Token 单独统计缓存读取量。缺失 usage 时不估算 Token，覆盖率表示已经建立路由的推理请求中有多少报告了 usage。`usage.server_keys` 按调用方认证所用的本地 server key（指纹，与 `/api/api-keys` 的 ID 一致）拆分请求数和 Token；Playground 流量计入 `playground`。
 
 | 数据                                            | 保存位置或保留规则                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------------- |
@@ -434,10 +473,10 @@ internal/
   protocol/              请求和响应转换、SSE 解析与输出
   telemetry/             请求跟踪、指标、日志与异常恢复
 webui/
-  embed.go               将三个静态资源内嵌到可执行文件
+  embed.go               将静态资源内嵌到可执行文件
   index.html             页面结构
-  app.js                 界面交互
-  styles.css             界面样式
+  css/                   设计 token、基础样式、组件与页面布局
+  js/                    ES 模块：外壳、i18n、共享辅助与每页一个模块
 ```
 
 建议阅读顺序：
@@ -445,7 +484,7 @@ webui/
 1. [程序入口](cmd/opencode2api/main.go) → [运行时管理](internal/gateway/runtime.go) → [HTTP 处理](internal/gateway/gateway.go)。
 2. [上游请求](internal/gateway/upstream.go)和[模型路由](internal/models/catalog.go)说明请求如何选择并到达上游。
 3. [请求转换](internal/protocol/request.go)、[响应转换](internal/protocol/response.go)和[流式传输](internal/protocol/stream.go)说明协议处理过程。
-4. [管理路由](internal/admin/server.go)和 [WebUI 交互](webui/app.js)说明配置编辑与诊断功能。
+4. [管理路由](internal/admin/server.go)和 [WebUI 交互](webui/js/main.js)说明配置编辑与诊断功能。
 
 执行 Go 格式化、静态分析和程序构建：
 
@@ -460,10 +499,10 @@ go build -o opencode2api ./cmd/opencode2api
 Node.js 仅用于 WebUI 的 JavaScript 语法检查：
 
 ```bash
-node --check webui/app.js
+for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英文两份 README。
+项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英越三份 README。
 
 ## 常见问题
 

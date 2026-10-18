@@ -19,8 +19,9 @@ const (
 	CapabilitiesURL = "https://models.opencode.ai/api.json"
 	ZenDocsURL      = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/zen.mdx"
 	GoDocsURL       = "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/go.mdx"
-	// LegacyZenBase is the console origin that still serves the anonymous
-	// models listing after chat traffic moved to the inference backend.
+	// LegacyZenBase is the legacy /zen console origin (serving /zen/v1/*) that
+	// still serves anonymous inference and the models listing alongside the newer
+	// /inference backend.
 	LegacyZenBase = "https://opencode.ai/zen"
 )
 
@@ -73,6 +74,17 @@ type Metadata struct {
 	StructuredOutput bool     `json:"structured_output,omitempty"`
 	InputModalities  []string `json:"input_modalities,omitempty"`
 	OutputModalities []string `json:"output_modalities,omitempty"`
+	// Cost is filled from models.dev at read time, in USD per million tokens.
+	Cost *Cost `json:"cost,omitempty"`
+}
+
+// Cost is the published per-million-token price of a model. A nil field means
+// the metadata did not state it.
+type Cost struct {
+	Input      *float64 `json:"input,omitempty"`
+	Output     *float64 `json:"output,omitempty"`
+	CacheRead  *float64 `json:"cache_read,omitempty"`
+	CacheWrite *float64 `json:"cache_write,omitempty"`
 }
 
 func (m *capabilityModel) metadata() Metadata {
@@ -258,12 +270,17 @@ type modelsResponse struct {
 }
 
 func FetchModels(ctx context.Context, client *http.Client, baseURL, key string) ([]string, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/models", nil)
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed+"/v1/models", nil)
 	if err != nil {
 		return nil, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("User-Agent", httpx.UserAgent())
+	if strings.EqualFold(trimmed, strings.TrimRight(LegacyZenBase, "/")) || strings.HasSuffix(strings.ToLower(trimmed), "/zen") {
+		req.Header.Set("User-Agent", httpx.LegacyUserAgent())
+	} else {
+		req.Header.Set("User-Agent", httpx.UserAgent())
+	}
 	req.Header.Set("x-opencode-client", "cli")
 	resp, err := client.Do(req)
 	if err != nil {

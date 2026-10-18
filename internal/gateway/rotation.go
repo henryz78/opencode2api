@@ -70,6 +70,7 @@ func (g *Gateway) handleRotation(w http.ResponseWriter, r *http.Request, externa
 	meta := telemetry.MetaFromRequest(r)
 	if meta != nil {
 		meta.Request = ids.Request
+		meta.Session = ids.Session
 		meta.ModelAlias = alias
 	}
 	visited := map[string]bool{}
@@ -180,7 +181,10 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		result.reason = "request_conversion_error"
 		return result
 	}
-	body, shaped := g.shapeKeyBody(bodies[config.TierGo], route, config.TierGo)
+	body, toolAlias, shaped := g.shapeKeyBody(bodies[config.TierGo], route, config.TierGo)
+	if meta := telemetry.MetaFromContext(parent); meta != nil {
+		meta.ToolAlias = toolAlias
+	}
 	cursor := g.goNodes.CursorFor(ids.Session)
 	var node *upstreamNode
 	// Each group attempt is exactly one HTTP call. Key selection may change,
@@ -260,7 +264,8 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 			g.monitor.BeginStream()
 			defer g.monitor.EndStream()
 		}
-		usage, reported, committed, err := wire.RotationStream(original.Context(), w, resp.Body, route.Protocol, external, alias, ready)
+		streamBody := wire.RenameStreamReader(resp.Body, route.Protocol, legacyAnonymousReadTool, toolAlias)
+		usage, reported, committed, err := wire.RotationStream(original.Context(), w, streamBody, route.Protocol, external, alias, ready)
 		if meta != nil {
 			meta.Usage = usage
 			meta.UsageReported = reported
@@ -295,6 +300,9 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 	}
 	if shaped {
 		b, err = wire.CollapseStream(bytes.NewReader(b), route.Protocol, route.ID)
+	}
+	if err == nil {
+		b = wire.RenameResponseTool(b, route.Protocol, legacyAnonymousReadTool, toolAlias)
 	}
 	var document map[string]any
 	if err == nil {

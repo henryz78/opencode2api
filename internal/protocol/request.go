@@ -21,6 +21,10 @@ func PrepareRequest(from, to Protocol, input map[string]any, upstreamURL string)
 	}
 	if to == Chat {
 		normalizeChatNullContent(output)
+	} else if to == Responses {
+		// The bridge already floors converted bodies; a same-protocol body is
+		// a clone of the client's and needs the same guard.
+		jsonutil.Put(output, "max_output_tokens", floorResponsesMaxTokens(output["max_output_tokens"]))
 	}
 	normalizeToolReasoningHistory(to, jsonutil.StringAt(output, "model"), upstreamURL, output)
 	return output, nil
@@ -511,8 +515,15 @@ func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest
 		}
 		for i, raw := range jsonutil.SliceAt(input, "tools") {
 			tool, ok := raw.(map[string]any)
-			if !ok || jsonutil.StringAt(tool, "type") != "function" {
-				return request, fmt.Errorf("tools[%d] must be a function tool", i)
+			if !ok {
+				return request, fmt.Errorf("tools[%d] must be an object", i)
+			}
+			// Built-in Responses tools (web_search, file_search, code_interpreter, …)
+			// have no Chat/Anthropic equivalent; skip them during cross-protocol
+			// bridging so requests that mix function tools with built-in plugins
+			// still reach the upstream.
+			if jsonutil.StringAt(tool, "type") != "function" {
+				continue
 			}
 			request.Tools = append(request.Tools, bridgeTool{
 				Name:        jsonutil.StringAt(tool, "name"),
@@ -940,11 +951,26 @@ func responsesReasoning(value any) any {
 	}
 }
 
+// minResponsesMaxOutputTokens is the smallest max_output_tokens the Zen
+// Responses endpoint accepts; anything lower is rejected with a 400.
+const minResponsesMaxOutputTokens = 16
+
+// floorResponsesMaxTokens keeps tiny downstream budgets (background titles,
+// probes) from failing Zen responses validation. Larger budgets pass through
+// untouched. Decoded JSON numbers are always float64, so no other numeric type
+// can reach this point.
+func floorResponsesMaxTokens(value any) any {
+	if n, ok := value.(float64); ok && n > 0 && n < minResponsesMaxOutputTokens {
+		return float64(minResponsesMaxOutputTokens)
+	}
+	return value
+}
+
 func encodeResponsesRequest(request bridgeRequest) map[string]any {
 	output := map[string]any{"model": request.Model, "stream": request.Stream}
 	jsonutil.Put(output, "temperature", request.Temperature)
 	jsonutil.Put(output, "top_p", request.TopP)
-	jsonutil.Put(output, "max_output_tokens", request.MaxTokens)
+	jsonutil.Put(output, "max_output_tokens", floorResponsesMaxTokens(request.MaxTokens))
 	jsonutil.Put(output, "stop", request.Stop)
 	jsonutil.Put(output, "metadata", request.Metadata)
 	if len(request.System) > 0 {

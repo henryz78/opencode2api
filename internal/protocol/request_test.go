@@ -46,3 +46,24 @@ func TestPrepareRequestNormalizesChatNullContent(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareRequestFloorsResponsesBudget(t *testing.T) {
+	for _, from := range []Protocol{Chat, Responses, Anthropic} {
+		for _, budget := range []float64{1, 16, 64} {
+			input, err := ConvertRequest(Chat, from, map[string]any{
+				"model": "test-free", "max_tokens": budget,
+				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := PrepareRequest(from, Responses, input, "https://opencode.ai/zen")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := output["max_output_tokens"], max(budget, 16); got != want {
+				t.Fatalf("%s budget=%v: max_output_tokens=%v, want %v", from, budget, got, want)
+			}
+		}
+	}
+}
