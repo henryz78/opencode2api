@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 
 	"opencode2api/internal/config"
 	wire "opencode2api/internal/protocol"
-	"opencode2api/internal/telemetry"
 )
 
 type freeTierTestTransport func(*http.Request) (*http.Response, error)
@@ -50,7 +50,7 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 				session := r.Header.Get("x-opencode-session")
 				validHeaders := r.Header.Get("x-opencode-session-id") == session && r.Header.Get("x-opencode-request") == "" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(r.Header.Get("x-opencode-project")) && strings.HasPrefix(r.Header.Get("User-Agent"), "opencode/latest/")
 				if prefix == "/zen" {
-					validHeaders = r.Header.Get("x-opencode-request") != "" && regexp.MustCompile(`^prj_[0-9a-f]{24}$`).MatchString(r.Header.Get("x-opencode-project")) && strings.HasPrefix(r.Header.Get("User-Agent"), "opencode/1.18.31 ")
+					validHeaders = regexp.MustCompile(`^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$`).MatchString(r.Header.Get("x-opencode-request")) && r.Header.Get("x-opencode-session-id") == session && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(r.Header.Get("x-opencode-project")) && r.Header.Get("User-Agent") == "opencode/1.19.3 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"
 				}
 				if !regexp.MustCompile(`^ses_[0-9a-f]{9}f[c-f][0-9a-f][0-9A-Za-z]{14}$`).MatchString(session) || !validHeaders {
 					t.Errorf("invalid free-tier identity: %v", r.Header)
@@ -82,16 +82,22 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 					toolName = "read"
 				}
 				// Availability probes have no client tool and receive a read stub.
-				if tool := tools[toolName]; tool == nil || tool["description"] == legacyDeprecatedReadDescription {
+				if tool := tools[toolName]; tool == nil || tool["description"] == v1DeprecatedReadDescription {
 					w.Header().Set("Content-Type", "text/event-stream")
-					io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+					w.Header().Set("Content-Encoding", "gzip")
+					compressed := gzip.NewWriter(w)
+					defer compressed.Close()
+					io.WriteString(compressed, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 					return
 				}
 				if tools[toolName]["description"] != "Look up a value" {
 					t.Error("client tool was overwritten")
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-test\",\"model\":\"test-model-free\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_lookup\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":\"{\\\"query\\\":\\\"hi\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", toolName)
+				w.Header().Set("Content-Encoding", "gzip")
+				compressed := gzip.NewWriter(w)
+				defer compressed.Close()
+				fmt.Fprintf(compressed, "data: {\"id\":\"chatcmpl-test\",\"model\":\"test-model-free\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_lookup\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":\"{\\\"query\\\":\\\"hi\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", toolName)
 			}))
 			defer upstream.Close()
 			cfg, err := config.Load("../../config.example.json")
@@ -113,16 +119,18 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 			// tests must never send requests to the real free-tier service.
 			fixtureURL, _ := url.Parse(upstream.URL)
 			for _, proxy := range g.transports.items {
-				transport := proxy.client.Transport
-				proxy.client.Transport = freeTierTestTransport(func(r *http.Request) (*http.Response, error) {
-					if r.URL.Host != "opencode.ai" && r.URL.Host != fixtureURL.Host {
-						return nil, fmt.Errorf("unexpected external request: %s", r.URL.Host)
-					}
-					clone := r.Clone(r.Context())
-					clone.URL.Scheme, clone.URL.Host = fixtureURL.Scheme, fixtureURL.Host
-					clone.Host = fixtureURL.Host
-					return transport.RoundTrip(clone)
-				})
+				for _, client := range []*http.Client{proxy.client, proxy.bun} {
+					transport := client.Transport
+					client.Transport = freeTierTestTransport(func(r *http.Request) (*http.Response, error) {
+						if r.URL.Host != "opencode.ai" && r.URL.Host != fixtureURL.Host {
+							return nil, fmt.Errorf("unexpected external request: %s", r.URL.Host)
+						}
+						clone := r.Clone(r.Context())
+						clone.URL.Scheme, clone.URL.Host = fixtureURL.Scheme, fixtureURL.Host
+						clone.Host = fixtureURL.Host
+						return transport.RoundTrip(clone)
+					})
+				}
 			}
 			g.catalog.Replace([]string{"test-model-free"}, nil)
 			for _, protocol := range []wire.Protocol{wire.Chat, wire.Responses, wire.Anthropic} {
@@ -139,7 +147,6 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 						body, _ := json.Marshal(payload)
 						r := httptest.NewRequest(http.MethodPost, wire.Path(protocol), bytes.NewReader(body))
 						r.Header.Set("Authorization", "Bearer "+cfg.ServerKeys[0])
-						r = r.WithContext(telemetry.WithRequestMeta(r.Context(), &telemetry.RequestMeta{}))
 						w := httptest.NewRecorder()
 						g.Handler().ServeHTTP(w, r)
 						if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "read_file") || !strings.Contains(w.Body.String(), "hi") {

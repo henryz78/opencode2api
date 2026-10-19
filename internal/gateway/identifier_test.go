@@ -1,23 +1,31 @@
 package gateway
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"opencode2api/internal/identity"
+	"opencode2api/internal/config"
 	wire "opencode2api/internal/protocol"
 )
 
 func TestEnsureProviderEndUserIdentifier(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.test/v1/responses", nil)
 	request.Header.Set("Authorization", "Bearer local-server-key")
+	// An unrelated header must not override the caller established by auth.
+	request.Header.Set("x-api-key", "unmatched-key")
+	scope := config.Fingerprint("local-server-key")
+	request = request.WithContext(context.WithValue(request.Context(), callerContextKey{}, scope))
 
 	responses := map[string]any{"model": "free-model"}
 	ensureProviderEndUserIdentifier(request, wire.Responses, responses)
-	want := identity.StableID("safety", "opencode2api:local-server-key")
+	digest := sha256.Sum256([]byte("opencode2api:" + scope))
+	want := fmt.Sprintf("safety_%x", digest[:12])
 	if responses["safety_identifier"] != want {
 		t.Fatalf("safety_identifier = %#v, want %q", responses["safety_identifier"], want)
 	}

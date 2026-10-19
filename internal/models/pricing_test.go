@@ -7,7 +7,7 @@ import (
 
 func TestAnonymousEligibilityUsesAuthoritativeCosts(t *testing.T) {
 	zero, paid := 0.0, 1.0
-	store := &PricingStore{
+	store := &PricingRegistry{
 		updatedAt: time.Now(),
 		models: map[string]Price{
 			"big-pickle":        {Input: &zero, Output: &zero},
@@ -33,7 +33,7 @@ func TestAnonymousEligibilityUsesAuthoritativeCosts(t *testing.T) {
 		protocols[tc.model] = "chat"
 		names = append(names, tc.model)
 	}
-	catalog := NewCatalog("zen", protocols)
+	catalog := Catalog("zen", protocols)
 	catalog.SetPricingStore(store)
 	catalog.SetFreeOnly(true)
 	catalog.Replace(names, nil)
