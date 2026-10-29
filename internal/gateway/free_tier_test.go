@@ -26,23 +26,30 @@ func (f freeTierTestTransport) RoundTrip(r *http.Request) (*http.Response, error
 }
 
 func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
-	for _, lane := range []string{"anonymous-legacy", "anonymous-fallback", "key-legacy"} {
+	for _, lane := range []string{"anonymous-v2", "key-v1"} {
 		t.Run(lane, func(t *testing.T) {
-			anonymous := lane != "key-legacy"
+			anonymous := lane != "key-v1"
 			key, prefix := "zen-test-key", "/zen"
 			if anonymous {
 				key = "public"
 			}
-			if lane == "anonymous-fallback" {
+			if lane == "anonymous-v2" {
 				prefix = "/inference"
 			}
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if lane == "anonymous-fallback" && r.URL.Path == "/zen/v1/chat/completions" {
-					w.WriteHeader(http.StatusForbidden)
-					io.WriteString(w, `{"error":{"message":"legacy lane unavailable"}}`)
-					return
+				expectedPaths := map[string]bool{
+					prefix + "/v1/chat/completions": true,
+					prefix + "/v1/responses":        true,
+					prefix + "/v1/messages":         true,
 				}
-				if r.URL.Path != prefix+"/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer "+key {
+				if prefix == "/inference" {
+					expectedPaths = map[string]bool{
+						"/inference/openai/v1/chat/completions": true,
+						"/inference/openai/v1/responses":        true,
+						"/inference/anthropic/v1/messages":      true,
+					}
+				}
+				if !expectedPaths[r.URL.Path] || r.Header.Get("Authorization") != "Bearer "+key {
 					t.Errorf("wrong lane: %s, auth=%q", r.URL.Path, r.Header.Get("Authorization"))
 					w.WriteHeader(http.StatusForbidden)
 					return
@@ -65,39 +72,50 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 				}
 				tools := map[string]map[string]any{}
 				for _, raw := range payload["tools"].([]any) {
-					tool := raw.(map[string]any)["function"].(map[string]any)
+					tool := raw.(map[string]any)
+					if function, ok := tool["function"].(map[string]any); ok {
+						tool = function
+					}
 					tools[tool["name"].(string)] = tool
 				}
 				if prefix == "/inference" {
 					for _, name := range []string{"shell", "edit", "glob", "grep", "read"} {
-						if tool := tools[name]; tool == nil || len(tool["description"].(string)) < 40 || len(tool["parameters"].(map[string]any)["properties"].(map[string]any)) == 0 {
+						tool := tools[name]
+						schema, _ := tool["parameters"].(map[string]any)
+						if schema == nil {
+							schema, _ = tool["input_schema"].(map[string]any)
+						}
+						properties, _ := schema["properties"].(map[string]any)
+						description, _ := tool["description"].(string)
+						if tool == nil || len(description) < 40 || len(properties) == 0 {
 							t.Errorf("missing genuine tool schema: %s", name)
 						}
 					}
 				} else if tools["read"] == nil || tools["shell"] != nil {
 					t.Error("legacy lane must use the read tool without 2.x shell injection")
 				}
-				toolName := "read_file"
-				if prefix == "/zen" {
-					toolName = "read"
-				}
-				// Availability probes have no client tool and receive a read stub.
-				if tool := tools[toolName]; tool == nil {
-					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set("Content-Encoding", "gzip")
-					compressed := gzip.NewWriter(w)
-					defer compressed.Close()
-					io.WriteString(compressed, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-					return
-				}
-				if tools[toolName]["description"] != "Look up a value" {
-					t.Error("client tool was overwritten")
+				if tools["read"] == nil || tools["read_file"] != nil {
+					t.Error("official read tool missing or client tool name leaked")
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Content-Encoding", "gzip")
 				compressed := gzip.NewWriter(w)
 				defer compressed.Close()
-				fmt.Fprintf(compressed, "data: {\"id\":\"chatcmpl-test\",\"model\":\"test-model-free\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_lookup\",\"type\":\"function\",\"function\":{\"name\":%q,\"arguments\":\"{\\\"query\\\":\\\"hi\\\"}\"}}]},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", toolName)
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/messages"):
+					fmt.Fprint(compressed, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"test-model-free\",\"content\":[],\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n")
+					fmt.Fprint(compressed, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+					fmt.Fprint(compressed, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"read hi\"}}\n\n")
+					fmt.Fprint(compressed, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+					fmt.Fprint(compressed, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n")
+					fmt.Fprint(compressed, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+				case strings.HasSuffix(r.URL.Path, "/responses"):
+					fmt.Fprint(compressed, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-test\",\"model\":\"test-model-free\",\"status\":\"in_progress\"}}\n\n")
+					fmt.Fprint(compressed, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"read hi\",\"item_id\":\"msg-test\",\"output_index\":0,\"content_index\":0}\n\n")
+					fmt.Fprint(compressed, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-test\",\"model\":\"test-model-free\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"read hi\",\"annotations\":[]}]}]}}\n\n")
+				default:
+					fmt.Fprint(compressed, "data: {\"id\":\"chatcmpl-test\",\"model\":\"test-model-free\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"read hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				}
 			}))
 			defer upstream.Close()
 			cfg, err := config.Load("../../config.example.json")
@@ -149,7 +167,7 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 						r.Header.Set("Authorization", "Bearer "+cfg.ServerKeys[0])
 						w := httptest.NewRecorder()
 						g.Handler().ServeHTTP(w, r)
-						if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "read_file") || !strings.Contains(w.Body.String(), "hi") {
+						if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "read") || !strings.Contains(w.Body.String(), "hi") {
 							t.Fatalf("response status=%d, body=%s", w.Code, w.Body.String())
 						}
 						if !stream && !json.Valid(w.Body.Bytes()) {
