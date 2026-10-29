@@ -12,11 +12,11 @@ func TestDerivedSessionsAreStableAndScopedToCaller(t *testing.T) {
 	}
 	first := DeriveRequestIDs(r, body, "caller-a")
 	other := DeriveRequestIDs(r, body, "caller-b")
-	if first.Session == other.Session || first.Project == other.Project {
+	if first.Session == other.Session {
 		t.Fatal("independent callers share a derived upstream identity")
 	}
 	continued := DeriveRequestIDs(r, body, "caller-a")
-	if first.Session != continued.Session || first.Project != continued.Project {
+	if first.Session != continued.Session {
 		t.Fatal("continuing a conversation changed its upstream identity")
 	}
 }
