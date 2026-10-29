@@ -14,7 +14,7 @@ func TestAnonymousCursorFallsBackToEarliestCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newTransportPool error: %v", err)
 	}
-	pool := anonymousPool(true, transports, 15*time.Second)
+	pool := anonymousPool(true, transports, 15*time.Second, anonymousBackoff{})
 	if pool.Len() != 1 {
 		t.Fatalf("pool.Len() = %d, want 1", pool.Len())
 	}

@@ -82,7 +82,7 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 					toolName = "read"
 				}
 				// Availability probes have no client tool and receive a read stub.
-				if tool := tools[toolName]; tool == nil || tool["description"] == v1DeprecatedReadDescription {
+				if tool := tools[toolName]; tool == nil {
 					w.Header().Set("Content-Type", "text/event-stream")
 					w.Header().Set("Content-Encoding", "gzip")
 					compressed := gzip.NewWriter(w)
@@ -111,7 +111,7 @@ func TestFreeTierRoutingAcrossClientProtocols(t *testing.T) {
 			}
 			cfg.Upstream = config.UpstreamConfig{Zen: upstream.URL + "/zen", Go: upstream.URL + "/go", Anonymous: upstream.URL + "/inference"}
 			cfg.Models.Protocols = map[string]string{"test-model-free": "chat"}
-			g, err := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+			g, err := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
