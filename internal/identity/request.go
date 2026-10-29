@@ -5,7 +5,8 @@
 // carry the v1 lane's x-opencode-request header. The identity that matters
 // upstream is therefore the pair (x-opencode-session, x-opencode-session-id):
 // Session is the conversation-affinity key and must keep the descending layout
-// minted by CanonicalSessionID.
+// minted by CanonicalSessionID; ChildSession preserves the client's own
+// x-opencode-session-id when it differs, as it does for a subagent.
 package identity
 
 import (
@@ -17,18 +18,22 @@ import (
 	"math/big"
 	"net/http"
 	"regexp"
+	"time"
 
 	"opencode2api/internal/jsonutil"
 )
 
 // RequestIDs carries the identity headers the upstream free tier inspects.
-// Session is sent as both x-opencode-session and x-opencode-session-id.
-// Message is the user message id the v1 lane receives as x-opencode-request;
-// the v2 lane rejects that header. Request only identifies the request inside
-// the gateway. Project is rendered per lane by the gateway (prj_* on the v1
-// lane, bare 40-hex on the v2 lane).
+// Session is the conversation-affinity key sent as x-opencode-session; the
+// v2 lane sends ChildSession, the client's own x-opencode-session-id, as
+// x-opencode-session-id so a subagent keeps its child id while affinity stays
+// on the parent. The v1 lane sends Session as both headers. Message is the
+// user message id the v1 lane receives as x-opencode-request; the v2 lane
+// rejects that header. Request only identifies the request inside the
+// gateway. Project is rendered per lane by the gateway.
 type RequestIDs struct {
 	Session       string
+	ChildSession  string
 	Request       string
 	Message       string
 	Project       string
@@ -68,21 +73,28 @@ func DeriveRequestIDs(r *http.Request, body map[string]any, scope string) Reques
 		signal = RandomID("fallback", 16)
 	}
 	session := scopedSessionID(scope, signal)
+	childSession := r.Header.Get("x-opencode-session-id")
+	if childSession != "" {
+		childSession = scopedSessionID(scope, childSession)
+	}
 	projectSignal := jsonutil.FirstString(r.Header.Get("x-opencode-project"), jsonutil.StringAt(body, "metadata", "project_id"))
 	if projectSignal == "" {
-		// Without a client project every caller would otherwise share one
-		// constant upstream project.
-		projectSignal = "opencode2api:default-project"
-		if scope != "" {
-			projectSignal += ":" + scope
-		}
+		// A fresh project id per request. The free tier ledges its quota per
+		// project id and egress, so one shared id is one shared bucket: the old
+		// per-caller default arrived pre-burned on popular exits. A client that
+		// names its project keeps that name.
+		projectSignal = RandomProjectID()
 	}
 	parentSession := jsonutil.FirstString(
 		r.Header.Get("x-parent-session-id"),
 		jsonutil.StringAt(body, "metadata", "parent_session_id"),
 	)
+	if parentSession != "" {
+		parentSession = scopedSessionID(scope, parentSession)
+	}
 	return RequestIDs{
 		Session:       session,
+		ChildSession:  childSession,
 		Request:       RandomID("req", 16),
 		Message:       UserMessageID(r, body, session),
 		Project:       projectSignal,
@@ -189,21 +201,57 @@ var descendingTimePartPattern = regexp.MustCompile(`^[0-9a-f]{9}f[c-f][0-9a-f]$`
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+// bootNonce separates the sessions one gateway process derives from those its
+// earlier runs derived. It is minted once per process and mixed into every
+// synthesized session, so restarting the daemon re-mints the upstream session
+// ids for the same conversations, while a single run keeps one stable id per
+// conversation. Official client sessions bypass it and stay verbatim.
+var bootNonce = mintBootNonce()
+
+// mintBootNonce returns the per-process session salt. It panics when the
+// system random source fails.
+func mintBootNonce() []byte {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return buf
+}
+
 // CanonicalSessionID returns signal unchanged when it already carries an
 // official OpenCode session minted by the client's Identifier.descending()
 // (preserving upstream prompt-cache affinity). Any other downstream identity
 // (UUIDs, foreign client sessions, legacy gateway sessions, conversation
-// seeds) is deterministically re-encoded into that exact layout — inverted
-// 48-bit millisecond timestamp with counter 1, so the low 12 hex digits are
-// ffe — while keeping the same stable session per conversation. A re-encoded
+// seeds) is re-encoded into that exact layout — inverted 48-bit millisecond
+// timestamp with counter 1, so the low 12 hex digits are ffe — keeping one
+// stable session per conversation for the life of the process. The upstream
+// free tier also ties a session id to its risk/quota bookkeeping, so the
+// re-encoding is salted with bootNonce: a restart yields fresh ids instead of
+// resuming whatever the previous run's exits were charged for. A re-encoded
 // session passes the free tier's encoding check where the raw hash shape was
 // rejected with 403 FreeTierError.
+//
+// The timestamp must also stay plausible. The free tier derives a risk window
+// from it: a session dated more than about a year from now, in either
+// direction, is answered with HTTP 429 "Free usage limit reached" — the same
+// message a genuinely exhausted IP receives — so a hash-derived timestamp
+// (which landed in 1970) made every free request fail however many WARP exits
+// were rotated. The encoding below therefore draws the timestamp from a slow
+// clock instead of the hash: today's UTC midnight minus a hash-derived offset
+// of at most sessionTimestampWindow. The id stays stable for a whole day, which
+// is all the affinity a live conversation needs, and its date never leaves the
+// window the upstream accepts.
 func CanonicalSessionID(signal string) string {
 	if isOfficialSessionID(signal) {
 		return signal
 	}
-	sum := sha256.Sum256([]byte("ses\x00" + signal))
-	timePart := descendingTimePart(sum[:6])
+	hasher := sha256.New()
+	hasher.Write([]byte("ses\x00"))
+	hasher.Write(bootNonce)
+	hasher.Write([]byte{0})
+	hasher.Write([]byte(signal))
+	sum := hasher.Sum(nil)
+	timePart := descendingTimePart(time.Now(), sum[:6])
 	randomPart := base62Fixed(new(big.Int).SetBytes(sum[6:16]), 14)
 	return "ses_" + timePart + randomPart
 }
@@ -215,14 +263,22 @@ func isOfficialSessionID(signal string) bool {
 	return canonicalSessionPattern.MatchString(signal) && descendingTimePartPattern.MatchString(signal[4:16])
 }
 
-// descendingTimePart renders six hash bytes as the official client's
-// Identifier.descending() layout: a 36-bit timestamp shifted into the top of
-// a 48-bit word, ORed with counter 1, then bitwise-NOT-ed so the low 12 hex
-// digits read ffe.
-func descendingTimePart(hash []byte) string {
-	current := (uint64(hash[0])<<28 | uint64(hash[1])<<20 | uint64(hash[2])<<12 |
-		uint64(hash[3])<<4 | uint64(hash[4])>>4) << 12
-	current |= 1
+// sessionTimestampWindow bounds how far before today a synthesized session's
+// timestamp may fall. The upstream accepts a date roughly a year away in either
+// direction and rejects anything beyond with HTTP 429, so a month leaves room
+// for clock skew and long-lived processes while never approaching the edge.
+const sessionTimestampWindow = 30 * 24 * time.Hour
+
+// descendingTimePart renders a plausible recent timestamp in the official
+// client's Identifier.descending() layout: a 36-bit timestamp shifted into the
+// top of a 48-bit word, ORed with counter 1, then bitwise-NOT-ed so the low 12
+// hex digits read ffe. The hash only picks the offset within
+// sessionTimestampWindow; it never supplies the date itself.
+func descendingTimePart(now time.Time, hash []byte) string {
+	window := uint64(sessionTimestampWindow / time.Millisecond)
+	offset := (uint64(hash[0])<<24 | uint64(hash[1])<<16 | uint64(hash[2])<<8 | uint64(hash[3])) % window
+	base := now.UTC().Truncate(24 * time.Hour).Add(-time.Duration(offset) * time.Millisecond)
+	current := uint64(base.UnixMilli())<<12 | 1
 	inverted := ^current & 0xFFFFFFFFFFFF
 	return hex.EncodeToString([]byte{
 		byte(inverted >> 40), byte(inverted >> 32), byte(inverted >> 24),
@@ -251,4 +307,16 @@ func RandomID(prefix string, size int) string {
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
 	return prefix + "_" + hex.EncodeToString(buf)
+}
+
+// RandomProjectID returns a project id in the shape the official CLI sends: the
+// 40-character hex of a git root commit. It is minted per request when the
+// client names no project, because the free tier ledges quota per project id
+// and egress together. It panics when the system random source fails.
+func RandomProjectID() string {
+	buf := make([]byte, 20)
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(buf)
 }

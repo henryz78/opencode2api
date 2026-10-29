@@ -4,19 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"opencode2api/internal/config"
@@ -269,7 +268,7 @@ func stripStaleReasoningInputs(route models.Route, bodies map[config.Tier][]byte
 			out[tier] = body
 			continue
 		}
-		encoded, err := json.Marshal(payload)
+		encoded, err := jsonutil.Marshal(payload)
 		if err != nil {
 			out[tier] = body
 			continue
@@ -299,6 +298,7 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 		resp, err, used := g.doSelectedKeyUpstream(ctx, route, bodies, ids, override, attemptOffset)
 		return resp, route, attemptOffset + used, err
 	}
+	blocked := false
 	if route.Anonymous {
 		resp, err, used := g.doAnonymousUpstream(ctx, route, bodies, ids, attempts)
 		attempts += used
@@ -306,6 +306,22 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 			return resp, route, attempts, nil
 		}
 		lastResponse, lastErr = resp, err
+		if errors.Is(err, errDeterministicClientRejection) {
+			// The request itself was rejected. Another lane or key gets the same
+			// answer, and retrying only buries this error under the next one, so
+			// hand the upstream 4xx back as the response (nil error) and let the
+			// normal error path forward its status and body unchanged.
+			g.logger.Warn("upstream rejected the request; not retrying on other tiers", "component", "upstream", "event", "deterministic_rejection", "request_id", ids.Request, "attempts", attempts, "model", route.ID)
+			return lastResponse, effectiveRoute, attempts, nil
+		}
+		if errors.Is(err, errFreeTierIPBlocked) {
+			// The free tier flagged the egress IP. The Zen key tier uses the
+			// same free gateway and gets the same answer; the Go tier is
+			// authenticated and is not subject to the free-tier IP gate, so
+			// keep it available below.
+			blocked = true
+			g.logger.Warn("free tier blocked the egress IP; skipping the Zen key tier", "component", "upstream", "event", "free_tier_ip_blocked", "request_id", ids.Request, "attempts", attempts)
+		}
 		if len(route.KeyTiers) > 0 {
 			g.logger.Debug("anonymous request did not succeed; entering preferred key tiers", "component", "upstream", "event", "anonymous_fallback", "request_id", ids.Request, "attempts", attempts, "key_tiers", route.KeyTiers)
 		}
@@ -328,6 +344,10 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 		keyTiers = []config.Tier{route.Tier}
 	}
 	for _, tier := range keyTiers {
+		if blocked && tier == config.TierZen {
+			g.logger.Debug("skipping the Zen key tier after an IP block", "component", "upstream", "event", "free_tier_ip_blocked", "request_id", ids.Request, "tier", tier)
+			continue
+		}
 		keyRoute := route
 		keyRoute.Tier = tier
 		keyRoute.Anonymous = false
@@ -342,6 +362,15 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 			return resp, keyRoute, attempts, nil
 		}
 		if resp != nil {
+			if isDeterministicClientResponse(resp.StatusCode, peekResponseBody(resp)) {
+				// Same request-level rejection as on the anonymous lane: no
+				// other tier can fix it, so return it as is.
+				g.logger.Warn("upstream rejected the request; not trying other tiers", "component", "upstream", "event", "deterministic_rejection", "request_id", ids.Request, "attempts", attempts, "tier", keyRoute.Tier, "status", resp.StatusCode)
+				if lastResponse != nil {
+					httpx.DrainAndClose(lastResponse.Body)
+				}
+				return resp, keyRoute, attempts, nil
+			}
 			if lastResponse != nil {
 				httpx.DrainAndClose(lastResponse.Body)
 			}
@@ -350,6 +379,15 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 		if err != nil {
 			lastErr = err
 		}
+	}
+	if blocked {
+		// The request never left the free tier's IP block: keep the block as
+		// the client-facing cause even if a Go fallback also failed, and close
+		// the last free-tier response whose body the handler will not forward.
+		if lastResponse != nil {
+			httpx.DrainAndClose(lastResponse.Body)
+		}
+		return nil, effectiveRoute, attempts, errFreeTierIPBlocked
 	}
 	if lastResponse != nil {
 		return lastResponse, effectiveRoute, attempts, nil
@@ -360,22 +398,55 @@ func (g *Gateway) doUpstreamTiers(ctx context.Context, route models.Route, bodie
 	return nil, effectiveRoute, attempts, lastErr
 }
 
+// defaultMaxAnonymousExits caps how many static proxies one request walks when
+// performance.max_anonymous_exits is zero. Without a cap, a request that every
+// exit rejects (403/429) scans the whole proxy list, up to two lanes per exit,
+// and can spend minutes before failing over.
+const defaultMaxAnonymousExits = 8
+
+// maxAnonymousExits returns the configured cap, or the built-in default when
+// the operator left the setting unset.
+func (g *Gateway) maxAnonymousExits() int {
+	if g != nil && g.cfg.Performance.MaxAnonymousExits > 0 {
+		return g.cfg.Performance.MaxAnonymousExits
+	}
+	return defaultMaxAnonymousExits
+}
+
 // doAnonymousUpstream walks the session's anonymous proxy cursor. Each static
-// proxy is tried at most once; rotating #pool proxies may be drawn again until
-// Retry.MaxAttempts proxies were used. For each proxy it tries the upstreams in
-// anonymousUpstreams order: the v1 lane (models.V1Base) before the v2
-// /inference upstream (Upstream.Anonymous). Any failure, including an HTTP
-// error response, advances to the next upstream or proxy; a proxy-route
-// failure, or a proxy marked unhealthy, skips that proxy's remaining
-// upstreams. Only a successful response ends the anonymous phase; exhausting
-// the proxy cursor returns control to the preferred authenticated tiers. It
-// returns the last response (body still open), else the last error, plus the
-// number of attempts made.
+// proxy is tried at most once, up to performance.max_anonymous_exits proxies;
+// rotating #pool proxies may be drawn again until Retry.MaxAttempts proxies
+// were used. For each proxy it tries the upstreams in anonymousUpstreams
+// order: the configured v2 /inference upstream (Upstream.Anonymous) only, since
+// the v1 lane fallback is retired and commented out there. Any failure,
+// including an HTTP error response, advances to the next upstream or proxy; a
+// proxy-route failure, or a proxy marked unhealthy, skips that proxy's
+// remaining upstreams. Only a successful response ends the anonymous phase;
+// exhausting the proxy cursor returns control to the preferred authenticated
+// tiers. It returns the last response (body still open), else the last error,
+// plus the number of attempts made.
 func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, bodies map[config.Tier][]byte, ids identity.RequestIDs, attemptOffset int) (*http.Response, error, int) {
+	if g.usesWARP(route.ID, config.TierZen, true) {
+		return g.doWarpAnonymousUpstream(ctx, route, bodies, ids, attemptOffset)
+	}
+	// The breaker holds the lane shut for an hour-scale window after repeated
+	// failures: poking a flagged upstream again would only extend the block.
+	if !g.anonymous.AllowAttempt() {
+		return nil, errAnonymousLanePaused, 0
+	}
+	defer g.anonymous.ReleaseProbe()
 	var lastResponse *http.Response
 	var lastErr error
+	// blocked records that some exit is under the free tier's IP block. The
+	// result then reports errFreeTierIPBlocked even when no exit was left to
+	// try, so the caller can report the block instead of a generic failure.
+	blocked := false
+	// halted records that the upstream rejected the request itself. The result
+	// then reports errDeterministicClientRejection so the caller keeps this
+	// 4xx instead of replacing it with a later tier's answer.
+	halted := false
 	cursor := g.anonymous.CursorFor(ids.Session)
-	limit := g.anonymous.Len()
+	limit := min(g.anonymous.Len(), g.maxAnonymousExits())
 	if g.anonymous.HasPool() && g.cfg.Retry.MaxAttempts > limit {
 		limit = g.cfg.Retry.MaxAttempts
 	}
@@ -394,9 +465,9 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 	protocol := route.ProtocolFor(config.TierZen)
 	upstreams := g.anonymousUpstreams()
 	preparedBodies := make([][]byte, len(upstreams))
-	toolAliases := make([]string, len(upstreams))
+	toolRenames := make([]*wire.ToolRenames, len(upstreams))
 	for i, baseURL := range upstreams {
-		preparedBodies[i], toolAliases[i] = prepareAnonymousBody(rawBody, protocol, models.IsV1Upstream(baseURL))
+		preparedBodies[i], toolRenames[i] = prepareAnonymousBody(rawBody, protocol, models.IsV1Upstream(baseURL))
 	}
 	for proxies < limit {
 		if ctx.Err() != nil {
@@ -410,6 +481,11 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 		}
 		node := cursor.Next()
 		if node == nil {
+			// Nothing usable is left. If that is because every exit is under
+			// the free tier's block, report the block rather than the generic
+			// no-proxy error, so the caller can try the authenticated Go tier
+			// or answer with the block itself.
+			blocked = g.anonymous.blockedExits(time.Now())
 			break
 		}
 		proxies++
@@ -422,7 +498,8 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 				}
 				break
 			}
-			setRequestShape(ctx, false, toolAliases[index])
+			setRequestShape(ctx, false, toolRenames[index])
+			attempts++
 			if meta := telemetry.MetaFromContext(ctx); meta != nil {
 				meta.Attempts = attemptOffset + attempts
 				meta.Tier = string(config.TierZen)
@@ -466,6 +543,24 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 				if isProxyFailure(err) {
 					break
 				}
+			} else if peekNetworkAbuseBlock(resp) {
+				// The free tier flagged this egress IP. The other lane leaves
+				// from the same IP and would answer the same way, so cool the
+				// exit and move on to another one instead of adding attempts
+				// that only lengthen the penalty. The body is restored, so the
+				// caller still forwards the upstream error.
+				node.proxy.markBlocked(time.Now().Add(g.freeTierBlockTTL()))
+				lastErr = errFreeTierIPBlocked
+				blocked = true
+				g.logger.Warn("free tier blocked the egress IP; cooling the exit", "component", "upstream", "event", "free_tier_ip_blocked", "request_id", ids.Request, "attempt", attempts, "tier", config.TierZen, "upstream", config.RedactURL(baseURL), "proxy", config.RedactURL(node.proxy.name), "block_for", g.freeTierBlockTTL().String())
+				break
+			} else if isDeterministicClientResponse(resp.StatusCode, peekResponseBody(resp)) {
+				// The request is too long, malformed, or otherwise invalid on
+				// every lane. Stop here and hand this 4xx to the client.
+				lastErr = errDeterministicClientRejection
+				halted = true
+				g.logger.Warn("upstream rejected the request; not trying other upstreams", "component", "upstream", "event", "deterministic_rejection", "request_id", ids.Request, "attempt", attempts, "tier", config.TierZen, "upstream", config.RedactURL(baseURL), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
+				break
 			} else {
 				g.logger.Debug("anonymous upstream returned an error response; trying the next upstream or proxy", "component", "upstream", "event", "anonymous_attempt_response_failed", "request_id", ids.Request, "attempt", attempts, "tier", config.TierZen, "upstream", config.RedactURL(baseURL), "key_id", "anonymous", "channel", "anonymous", "anonymous", true, "proxy", config.RedactURL(node.proxy.name), "status", resp.StatusCode, "duration_ms", duration.Milliseconds())
 			}
@@ -473,13 +568,49 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 				break
 			}
 		}
+		if halted {
+			// A request-level rejection is identical on every exit: another
+			// proxy cannot shorten the context or repair the payload. Keep the
+			// response and let the caller forward it instead of sending the
+			// same request through every remaining exit.
+			g.anonymous.NoteNeutral()
+			break
+		}
 		if ctx.Err() != nil {
 			break
 		}
 		g.observeAnonymousResult(ctx, node, nodeResp, nodeErr)
+		if g.anonymous.Open() {
+			// This attempt tripped the breaker (or another request did):
+			// continuing the walk would keep probing a lane that is now
+			// paused.
+			break
+		}
+	}
+	// Every configured exit is under the same IP block: another request
+	// cannot reach a working exit, so pause the lane instead of repeating the
+	// 403 walk until the exit cool-downs expire.
+	if blocked && g.anonymous.blockedExits(time.Now()) {
+		if pause, tripped := g.anonymous.ForceOpen(); tripped {
+			g.logger.Warn("anonymous lane circuit breaker opened", "component", "upstream", "event", "anonymous_breaker_open", "reason", "all_exits_blocked", "request_id", ids.Request, "paused_for", pause.String())
+		}
 	}
 	if lastResponse != nil {
+		// The caller keeps and forwards this response; a block or a
+		// deterministic rejection only changes the error so the keyed tiers
+		// are skipped. A request-level rejection wins over a block seen on an
+		// earlier exit: it is the error the client can act on, and forwarding
+		// the block instead would hide the real cause.
+		if halted {
+			return lastResponse, errDeterministicClientRejection, attempts
+		}
+		if blocked {
+			return lastResponse, errFreeTierIPBlocked, attempts
+		}
 		return lastResponse, nil, attempts
+	}
+	if blocked {
+		return nil, errFreeTierIPBlocked, attempts
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no healthy anonymous proxies available")
@@ -490,18 +621,21 @@ func (g *Gateway) doAnonymousUpstream(ctx context.Context, route models.Route, b
 	return nil, lastErr, attempts
 }
 
-// anonymousUpstreams returns the ordered base URLs for the keyless free tier:
-// the v1 origin (models.V1Base) is tried first, and the configured v2
-// /inference origin (Upstream.Anonymous) is kept as a fallback. Only the v1
-// origin is returned when Upstream.Anonymous is empty or names that same
-// origin.
+// anonymousUpstreams returns the ordered base URLs for the keyless free tier.
+// Only the v2 /inference origin is used: the 1.x /zen lane was retired for free
+// models, so the v1 fallback is commented out rather than called. The code is
+// kept for a revert; uncommenting the two lines marked below restores the old
+// order (v2 first, v1 as fallback).
 func (g *Gateway) anonymousUpstreams() []string {
-	v1 := strings.TrimRight(models.V1Base, "/")
+	// v1 := strings.TrimRight(models.V1Base, "/")
 	primary := strings.TrimRight(g.cfg.Upstream.Anonymous, "/")
-	if primary == "" || strings.EqualFold(v1, primary) {
-		return []string{models.V1Base}
+	if primary == "" {
+		// Config normalization fills this; keep the v2 default for a zero-value
+		// config so this never falls through to the retired v1 lane.
+		primary = "https://opencode.ai/inference"
 	}
-	return []string{models.V1Base, g.cfg.Upstream.Anonymous}
+	return []string{primary}
+	// return []string{g.cfg.Upstream.Anonymous, models.V1Base}
 }
 
 // inferenceClient picks the client of proxy for a request for model to
@@ -517,91 +651,26 @@ func (g *Gateway) inferenceClient(proxy *proxyTransport, baseURL, model string) 
 	return proxy.client
 }
 
-// v1ReadTool is the single tool name required by the v1 free-tier gate
-// (/zen). Unlike the v2 /inference gate, it does not require a
-// shell/edit/glob/grep toolset and does not validate tool descriptions or
-// parameter schemas: a single tool named "read" is sufficient.
-const v1ReadTool = "read"
-
-// v1DeprecatedReadDescription is attached when the gateway must inject a
-// placeholder "read" tool on the v1 lane (/zen) because the client request
-// declared no read-related tool of its own. It explicitly tells the model that
-// the tool is deprecated and must never be invoked.
-const v1DeprecatedReadDescription = "DEPRECATED: This tool is deprecated and disabled. Do NOT call or reference this tool under any circumstances; ignore it completely."
-
-// v2CoreTools are the tool names the v2 /inference free-tier gate expects on
-// an agent-shaped request. Requests without a shell tool and a read tool are
-// rejected with 403 FreeTierError.
+// prepareAnonymousBody returns body normalized for the free tier alongside the
+// tool renames the response must restore. The body is forced to stream (keeping
+// Chat usage reporting on), carries the official CLI system prompt, and its
+// tools are renamed and completed for the lane v1 selects; an unchanged body is
+// returned as is.
 //
-// "shell" is the name OpenCode 2.x ships; the v1 client's "bash" spelling is
-// deliberately not injected on /inference because that gate validates the
-// definition of every tool it recognises, and a "bash" definition the gateway
-// synthesises does not match the one upstream expects. Since 2026-10-14 name
-// presence is not enough on /inference either: the upstream compares each
-// recognised tool's description and parameter schema against the official CLI's
-// definitions byte-for-byte (minimal stand-ins 403), which is why the genuine
-// definitions below are embedded. Tool order is irrelevant and extra client
-// tools are allowed.
-var v2CoreTools = []string{"shell", "edit", "glob", "grep", "read"}
-
-// opencodeToolsJSON holds the genuine OpenCode tool definitions (description
-// and JSON schema) captured from the official client. The /inference free-tier
-// gate checks the definition of every tool whose name it recognises, so a
-// synthesised stub — even one carrying the right name — is rejected with 403
-// FreeTierError. The gateway therefore ships the real definitions for the v2
-// lane and uses them both for the tools it injects and for any same-named tool
-// the downstream client declared.
-//
-//go:embed opencode_tools.json
-var opencodeToolsJSON []byte
-
-// opencodeToolDefinition is one entry of opencode_tools.json.
-type opencodeToolDefinition struct {
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
-}
-
-var (
-	opencodeToolsOnce sync.Once
-	opencodeTools     map[string]opencodeToolDefinition
-)
-
-// knownOpencodeTool returns the genuine definition for an OpenCode tool name.
-// The embedded JSON is decoded once; if it fails to decode, no tool is known.
-func knownOpencodeTool(name string) (opencodeToolDefinition, bool) {
-	opencodeToolsOnce.Do(func() {
-		definitions := map[string]opencodeToolDefinition{}
-		if err := json.Unmarshal(opencodeToolsJSON, &definitions); err != nil {
-			definitions = map[string]opencodeToolDefinition{}
-		}
-		opencodeTools = definitions
-	})
-	definition, ok := opencodeTools[name]
-	return definition, ok
-}
-
-// prepareAnonymousBody returns body normalized for the free tier alongside any
-// original client tool name that was aliased to "read" for the v1 gate. The
-// body is forced to stream (keeping Chat usage reporting on) and its tools are
-// shaped for the lane v1 selects; an unchanged body is returned as is.
-//
-// On the v1 gate (v1 == true), none of the v2 core tools are injected: if the
-// client declared a read-related tool (case-insensitive, e.g. "reAd",
-// "Read_file", "readFile"), it is renamed in-place to "read" while keeping its
-// original description and parameters, and its original name is returned so
-// the gateway can restore it in the downstream response; if no read-related
-// tool is present, a single deprecated "read" stub is injected.
-//
-// On a v2 gate (v1 == false), v2CoreTools with genuine CLI 2.x definitions are
-// ensured. System One payloads are decision requests, not agent traffic, so
-// they are forwarded verbatim, as is a body that is not a JSON object.
-func prepareAnonymousBody(body []byte, protocol wire.Protocol, v1 bool) ([]byte, string) {
+// Every named client tool becomes an opaque clint_<digest> (see
+// protocol.ClientToolWireName: a client tool name that survives on the wire is
+// what the free tier refuses) and the full official set for the lane is
+// appended, so the request looks like an official CLI session on both the v1
+// (/zen) and v2 lanes. System One payloads are decision requests, not agent
+// traffic, so they are forwarded verbatim, as is a body that is not a JSON
+// object.
+func prepareAnonymousBody(body []byte, protocol wire.Protocol, v1 bool) ([]byte, *wire.ToolRenames) {
 	if protocol == wire.SystemOne {
-		return body, ""
+		return body, nil
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return body, ""
+		return body, nil
 	}
 	changed := false
 	if streaming, ok := payload["stream"].(bool); !ok || !streaming {
@@ -611,26 +680,114 @@ func prepareAnonymousBody(body []byte, protocol wire.Protocol, v1 bool) ([]byte,
 	if ensureAnonymousChatUsage(payload, protocol) {
 		changed = true
 	}
-	var alias string
-	if v1 {
-		var toolChanged bool
-		alias, toolChanged = ensureV1ReadTool(payload, protocol)
-		if toolChanged {
-			changed = true
-		}
-	} else if ensureV2Tools(payload, protocol) {
+	if injectOfficialPrompt(payload, protocol, v1) {
+		changed = true
+	}
+	renames, toolsChanged := renameAndCompleteTools(payload, protocol, v1)
+	if toolsChanged {
+		changed = true
+	}
+	if !v1 && protocol == wire.Chat && ensureV2CompletionLimit(payload) {
 		changed = true
 	}
 	if !changed {
-		return body, alias
+		return body, renames
 	}
-	encoded, err := json.Marshal(payload)
+	encoded, err := encodeAnonymousBody(payload, protocol, v1)
 	if err != nil {
-		// The alias is dropped with the failed re-encode: the body never left
-		// the gateway, so there is nothing downstream to restore.
-		return body, ""
+		// The renames are dropped with the failed re-encode: the body never
+		// left the gateway, so there is nothing downstream to restore.
+		return body, nil
 	}
-	return encoded, alias
+	return encoded, renames
+}
+
+// v2CompletionLimit is the max_completion_tokens a 2.x client puts on every
+// chat body, so the free tier always sees the same ceiling.
+const v2CompletionLimit = 32000
+
+// ensureV2CompletionLimit adds the client's own max_completion_tokens when the
+// caller did not ask for a ceiling. A caller-supplied max_tokens or
+// max_completion_tokens wins, so an explicit limit is still honoured. It
+// reports whether the payload changed.
+func ensureV2CompletionLimit(payload map[string]any) bool {
+	if _, ok := payload["max_completion_tokens"]; ok {
+		return false
+	}
+	if _, ok := payload["max_tokens"]; ok {
+		return false
+	}
+	payload["max_completion_tokens"] = v2CompletionLimit
+	return true
+}
+
+// v2ChatKeyOrder is the order the 2.x client's JSON.stringify emits the keys of
+// a chat body in. Go serialises a map alphabetically, which puts
+// max_completion_tokens first where a real client starts with model; the bytes
+// parse the same either way, but the gateway exists to be indistinguishable, so
+// the skeleton is written in the client's order.
+var v2ChatKeyOrder = []string{"model", "messages", "tools", "stream", "stream_options", "max_completion_tokens"}
+
+// marshalV2ChatBody encodes a chat payload with v2ChatKeyOrder first and any
+// remaining keys sorted after it. Values still go through encoding/json, so
+// only the key order differs from a plain marshal.
+func marshalV2ChatBody(payload map[string]any) ([]byte, error) {
+	var buffer bytes.Buffer
+	buffer.WriteByte('{')
+	written := make(map[string]bool, len(payload))
+	first := true
+	write := func(key string) error {
+		value, ok := payload[key]
+		if !ok {
+			return nil
+		}
+		keyJSON, err := jsonutil.Marshal(key)
+		if err != nil {
+			return err
+		}
+		valueJSON, err := jsonutil.Marshal(value)
+		if err != nil {
+			return err
+		}
+		if !first {
+			buffer.WriteByte(',')
+		}
+		first = false
+		buffer.Write(keyJSON)
+		buffer.WriteByte(':')
+		buffer.Write(valueJSON)
+		written[key] = true
+		return nil
+	}
+	for _, key := range v2ChatKeyOrder {
+		if err := write(key); err != nil {
+			return nil, err
+		}
+	}
+	rest := make([]string, 0, len(payload))
+	for key := range payload {
+		if !written[key] {
+			rest = append(rest, key)
+		}
+	}
+	sort.Strings(rest)
+	for _, key := range rest {
+		if err := write(key); err != nil {
+			return nil, err
+		}
+	}
+	buffer.WriteByte('}')
+	return buffer.Bytes(), nil
+}
+
+// encodeAnonymousBody renders a shaped anonymous payload in the byte layout the
+// lane's client produces: 2.x chat bodies keep the client's key order, every
+// other lane keeps plain encoding/json.
+func encodeAnonymousBody(payload map[string]any, protocol wire.Protocol, v1 bool) ([]byte, error) {
+	if !v1 && protocol == wire.Chat {
+		return marshalV2ChatBody(payload)
+	}
+	return jsonutil.Marshal(payload)
 }
 
 // ensureAnonymousChatUsage keeps token usage available when a non-streaming
@@ -652,297 +809,6 @@ func ensureAnonymousChatUsage(payload map[string]any, protocol wire.Protocol) bo
 	}
 	options["include_usage"] = true
 	return true
-}
-
-// ensureV1ReadTool satisfies the v1 free-tier gate (/zen) using only the
-// single "read" tool requirement:
-//  1. If the client already has an exact "read" tool, nothing is injected or
-//     renamed.
-//  2. If the client has a read-related tool (case-insensitive match such as
-//     "reAd", "read_file", "ReadFile", etc.), that tool is renamed to "read"
-//     (preserving its client description and schema), any matching tool_choice
-//     or historical tool call in the request is rewritten to "read", and the
-//     client's original tool name is returned so responses can be restored.
-//     A case-insensitive "read" is preferred over other read-related names.
-//  3. If the client has no read-related tool at all, a single "read" stub tool
-//     is appended with a deprecated/ignore description so the model never
-//     invokes it.
-//
-// It also reports whether the payload changed. A "tools" value that is not an
-// array is left untouched.
-func ensureV1ReadTool(payload map[string]any, protocol wire.Protocol) (string, bool) {
-	raw, exists := payload["tools"]
-	if !exists {
-		payload["tools"] = []any{v1DeprecatedReadTool(protocol)}
-		return "", true
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return "", false
-	}
-	candidateIndex := -1
-	candidateName := ""
-	caseFoldCandidate := false
-	for index, item := range items {
-		name := anonymousToolName(protocol, item)
-		if name == "" {
-			continue
-		}
-		if name == v1ReadTool {
-			return "", false
-		}
-		if strings.EqualFold(name, v1ReadTool) {
-			if !caseFoldCandidate {
-				candidateIndex = index
-				candidateName = name
-				caseFoldCandidate = true
-			}
-			continue
-		}
-		if candidateIndex < 0 && isV1ReadToolCandidate(name) {
-			candidateIndex = index
-			candidateName = name
-		}
-	}
-	if candidateIndex >= 0 {
-		setAnonymousToolName(protocol, items[candidateIndex], v1ReadTool)
-		rewriteV1ToolReferences(payload, protocol, candidateName, v1ReadTool)
-		payload["tools"] = items
-		return candidateName, true
-	}
-	items = append(items, v1DeprecatedReadTool(protocol))
-	payload["tools"] = items
-	return "", true
-}
-
-// isV1ReadToolCandidate reports whether a client tool name represents a
-// read-related tool (case-insensitive), such as "reAd", "read_file",
-// "ReadFile", "file_read", or "view_file".
-func isV1ReadToolCandidate(name string) bool {
-	lower := strings.ToLower(strings.TrimSpace(name))
-	if lower == "" {
-		return false
-	}
-	if lower == "read" {
-		return true
-	}
-	normalized := strings.NewReplacer("_", "", "-", "", ".", "").Replace(lower)
-	switch normalized {
-	case "readfile", "fileread", "readfiles", "readtext", "readtextfile", "readcontent", "viewfile":
-		return true
-	}
-	return strings.HasPrefix(lower, "read_") || strings.HasPrefix(lower, "read-") || strings.HasSuffix(lower, "_read") || strings.HasSuffix(lower, "-read")
-}
-
-// setAnonymousToolName updates the function name of a tool definition in-place
-// while keeping all other client fields (description, parameters/input_schema,
-// strict, etc.) intact.
-func setAnonymousToolName(protocol wire.Protocol, item any, name string) {
-	entry, ok := item.(map[string]any)
-	if !ok {
-		return
-	}
-	if protocol == wire.Chat {
-		if function, ok := entry["function"].(map[string]any); ok {
-			function["name"] = name
-		}
-		return
-	}
-	entry["name"] = name
-}
-
-// rewriteV1ToolReferences renames any named tool_choice and
-// assistant tool-call history entries from fromName to toName so the outbound
-// request stays self-consistent after a client read tool is aliased to "read".
-func rewriteV1ToolReferences(payload map[string]any, protocol wire.Protocol, fromName, toName string) {
-	if fromName == "" || fromName == toName {
-		return
-	}
-	switch protocol {
-	case wire.Chat:
-		if choice, ok := payload["tool_choice"].(map[string]any); ok {
-			if function, ok := choice["function"].(map[string]any); ok && jsonutil.StringAt(function, "name") == fromName {
-				function["name"] = toName
-			}
-		}
-		for _, rawMsg := range jsonutil.SliceAt(payload, "messages") {
-			msg, _ := rawMsg.(map[string]any)
-			for _, rawCall := range jsonutil.SliceAt(msg, "tool_calls") {
-				call, _ := rawCall.(map[string]any)
-				if function, ok := call["function"].(map[string]any); ok && jsonutil.StringAt(function, "name") == fromName {
-					function["name"] = toName
-				}
-			}
-		}
-	case wire.Responses:
-		if choice, ok := payload["tool_choice"].(map[string]any); ok && jsonutil.StringAt(choice, "name") == fromName {
-			choice["name"] = toName
-		}
-		for _, rawItem := range jsonutil.SliceAt(payload, "input") {
-			item, _ := rawItem.(map[string]any)
-			if jsonutil.StringAt(item, "type") == "function_call" && jsonutil.StringAt(item, "name") == fromName {
-				item["name"] = toName
-			}
-		}
-	case wire.Anthropic:
-		if choice, ok := payload["tool_choice"].(map[string]any); ok && jsonutil.StringAt(choice, "name") == fromName {
-			choice["name"] = toName
-		}
-		for _, rawMsg := range jsonutil.SliceAt(payload, "messages") {
-			msg, _ := rawMsg.(map[string]any)
-			for _, rawBlock := range jsonutil.SliceAt(msg, "content") {
-				block, _ := rawBlock.(map[string]any)
-				if jsonutil.StringAt(block, "type") == "tool_use" && jsonutil.StringAt(block, "name") == fromName {
-					block["name"] = toName
-				}
-			}
-		}
-	}
-}
-
-// v1DeprecatedReadTool builds the single placeholder "read" tool injected on
-// the v1 lane (/zen) when the client request has no read-related tool of its
-// own, in the wire shape of protocol. Its description marks the tool as
-// deprecated and instructs the model to ignore it completely.
-func v1DeprecatedReadTool(protocol wire.Protocol) map[string]any {
-	parameters := map[string]any{"type": "object", "properties": map[string]any{}}
-	switch protocol {
-	case wire.Chat:
-		return map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        v1ReadTool,
-				"description": v1DeprecatedReadDescription,
-				"parameters":  parameters,
-			},
-		}
-	case wire.Anthropic:
-		return map[string]any{
-			"name":         v1ReadTool,
-			"description":  v1DeprecatedReadDescription,
-			"input_schema": parameters,
-		}
-	default:
-		return map[string]any{
-			"type":        "function",
-			"name":        v1ReadTool,
-			"description": v1DeprecatedReadDescription,
-			"parameters":  parameters,
-		}
-	}
-}
-
-// ensureV2Tools makes the tool list read as an OpenCode 2.x agent session on
-// a v2 gate: every recognised OpenCode tool carries its genuine CLI 2.x
-// definition and missing core tools are appended with genuine schemas;
-// unrecognised client tools are left untouched. It reports whether the payload
-// changed; a "tools" value that is not an array is left untouched.
-func ensureV2Tools(payload map[string]any, protocol wire.Protocol) bool {
-	raw, exists := payload["tools"]
-	if !exists {
-		payload["tools"] = v2Toolset(protocol, v2CoreTools)
-		return true
-	}
-	items, ok := raw.([]any)
-	if !ok {
-		return false
-	}
-	changed := false
-	present := make(map[string]bool, len(items))
-	for index, item := range items {
-		name := anonymousToolName(protocol, item)
-		if name == "" {
-			continue
-		}
-		present[name] = true
-		if _, known := knownOpencodeTool(name); known {
-			items[index] = v2Tool(protocol, name)
-			changed = true
-		}
-	}
-	missing := make([]string, 0, len(v2CoreTools))
-	for _, name := range v2CoreTools {
-		if !present[name] {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		items = append(items, v2Toolset(protocol, missing)...)
-		changed = true
-	}
-	if !changed {
-		return false
-	}
-	payload["tools"] = items
-	return true
-}
-
-// anonymousToolName returns the name of a tool definition in the wire shape
-// of protocol (function.name on Chat, name elsewhere), or "" when it has none.
-func anonymousToolName(protocol wire.Protocol, item any) string {
-	entry, ok := item.(map[string]any)
-	if !ok {
-		return ""
-	}
-	if protocol == wire.Chat {
-		return jsonutil.StringAt(entry, "function", "name")
-	}
-	return jsonutil.StringAt(entry, "name")
-}
-
-// v2Toolset returns the wire-shaped genuine CLI 2.x definitions for the given
-// tool names on a v2 gate. A nil names selects every v2CoreTools entry.
-func v2Toolset(protocol wire.Protocol, names []string) []any {
-	if names == nil {
-		names = v2CoreTools
-	}
-	tools := make([]any, 0, len(names))
-	for _, name := range names {
-		if tool := v2Tool(protocol, name); tool != nil {
-			tools = append(tools, tool)
-		}
-	}
-	return tools
-}
-
-// v2Tool renders one tool in the shape the given protocol expects, using the
-// genuine OpenCode CLI 2.x definition whenever one is known and an "Agent tool
-// <name>" placeholder with an empty object schema otherwise. SystemOne
-// payloads never reach this path (prepareAnonymousBody forwards them
-// verbatim), so it falls back to the Responses/default shape.
-func v2Tool(protocol wire.Protocol, name string) map[string]any {
-	description := "Agent tool " + name
-	parameters := map[string]any{"type": "object", "properties": map[string]any{}}
-	if definition, ok := knownOpencodeTool(name); ok {
-		description = definition.Description
-		if definition.Parameters != nil {
-			parameters = definition.Parameters
-		}
-	}
-	switch protocol {
-	case wire.Chat:
-		return map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name":        name,
-				"description": description,
-				"parameters":  parameters,
-			},
-		}
-	case wire.Anthropic:
-		return map[string]any{
-			"name":         name,
-			"description":  description,
-			"input_schema": parameters,
-		}
-	default:
-		return map[string]any{
-			"type":        "function",
-			"name":        name,
-			"description": description,
-			"parameters":  parameters,
-		}
-	}
 }
 
 // requestBodyDumpLimit caps how much of an outbound body is written to the log.
@@ -987,22 +853,23 @@ func (g *Gateway) dumpOutboundBodies(route models.Route, bodies map[config.Tier]
 }
 
 // shapeKeyBody normalizes key-tier free-model wire bodies to agent shape
-// (stream + required tools), mirroring the anonymous lane; the tier's base URL
-// decides between v1 and v2 shaping. Upstream now rejects non-agent-shaped
-// free-tier requests on every lane with 403 FreeTierError; paid models keep
-// their original bodies. It reports the shaped body, any v1 "read" tool alias
-// that must be restored in the response, and whether the body changed so the
-// gateway can collapse the SSE stream a non-streaming client receives back.
-func (g *Gateway) shapeKeyBody(body []byte, route models.Route, tier config.Tier) ([]byte, string, bool) {
+// (stream + official prompt + renamed and completed tools), mirroring the
+// anonymous lane; the tier's base URL decides between v1 and v2 shaping.
+// Upstream now rejects non-agent-shaped free-tier requests on every lane with
+// 403 FreeTierError; paid models keep their original bodies. It reports the
+// shaped body, the tool renames to restore in the response, and whether the
+// body changed so the gateway can collapse the SSE stream a non-streaming
+// client receives back.
+func (g *Gateway) shapeKeyBody(body []byte, route models.Route, tier config.Tier) ([]byte, *wire.ToolRenames, bool) {
 	if !g.catalog.IsFreeModel(route.ID) {
-		return body, "", false
+		return body, nil, false
 	}
 	baseURL := g.cfg.Upstream.Zen
 	if tier == config.TierGo {
 		baseURL = g.cfg.Upstream.Go
 	}
-	shaped, alias := prepareAnonymousBody(body, route.ProtocolFor(tier), models.IsV1Upstream(baseURL))
-	return shaped, alias, !bytes.Equal(shaped, body)
+	shaped, renames := prepareAnonymousBody(body, route.ProtocolFor(tier), models.IsV1Upstream(baseURL))
+	return shaped, renames, !bytes.Equal(shaped, body)
 }
 
 // doSelectedKeyUpstream sends exactly one attempt through the operator-selected
@@ -1027,33 +894,53 @@ func (g *Gateway) doSelectedKeyUpstream(ctx context.Context, route models.Route,
 	if len(body) == 0 {
 		return nil, fmt.Errorf("no prepared %s request body", override.Tier), 0
 	}
-	shaped, alias, changed := g.shapeKeyBody(body, route, override.Tier)
+	shaped, toolRenames, changed := g.shapeKeyBody(body, route, override.Tier)
 	if changed {
 		body = shaped
 	}
-	setRequestShape(ctx, changed, alias)
+	setRequestShape(ctx, changed, toolRenames)
+	useWARP := g.usesWARP(route.ID, override.Tier, false)
 	proxy := nodes.Proxy(node)
-	if proxy == nil {
-		return nil, errors.New("selected upstream key has no proxy binding"), 0
+	if !useWARP {
+		if proxy == nil {
+			return nil, errors.New("selected upstream key has no proxy binding"), 0
+		}
 	}
 	if meta := telemetry.MetaFromContext(ctx); meta != nil {
 		meta.Attempts = attemptOffset + 1
 		meta.Tier = string(override.Tier)
 	}
 	keyID := config.KeyDisplayID(node.key)
-	setRequestCredential(ctx, override.Tier, keyID, "key", false, proxy)
+	if useWARP {
+		setRequestCredential(ctx, override.Tier, keyID, "key", false, nil)
+	} else {
+		setRequestCredential(ctx, override.Tier, keyID, "key", false, proxy)
+	}
 	req, err := upstreamRequest(ctx, baseURL, route.ProtocolFor(override.Tier), body, ids, node.key)
 	if err != nil {
 		return nil, err, 0
 	}
-	if proxy.pool {
+	if !useWARP && proxy.pool {
 		req.Close = true
 	}
 	started := time.Now()
-	resp, err := doInferenceAttempt(g.inferenceClient(proxy, baseURL, route.ID), req, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second, g.attemptTimeout)
+	var resp *http.Response
+	var egress string
+	if useWARP {
+		resp, egress, err = g.doWARPAttempt(ctx, req, baseURL, route.ID, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second)
+	} else {
+		resp, err = doInferenceAttempt(g.inferenceClient(proxy, baseURL, route.ID), req, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second, g.attemptTimeout)
+	}
 	duration := time.Since(started)
-	g.recordUpstreamAttempt(ctx, route, ids, attemptOffset+1, keyID, "key", false, proxy, resp, err, duration)
+	recordProxy := proxy
+	if useWARP {
+		recordProxy = warpProxy(egress)
+	}
+	g.recordUpstreamAttempt(ctx, route, ids, attemptOffset+1, keyID, "key", false, recordProxy, resp, err, duration)
 	if err != nil {
+		if useWARP {
+			return nil, err, 1
+		}
 		return nil, asProxyUnavailable(proxy, err), 1
 	}
 	return resp, nil, 1
@@ -1088,11 +975,12 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route models.Route, bodies 
 	if len(body) == 0 {
 		return nil, fmt.Errorf("no prepared %s request body", route.Tier), 0
 	}
-	shaped, alias, changed := g.shapeKeyBody(body, route, route.Tier)
+	shaped, toolRenames, changed := g.shapeKeyBody(body, route, route.Tier)
 	if changed {
 		body = shaped
 	}
-	setRequestShape(ctx, changed, alias)
+	setRequestShape(ctx, changed, toolRenames)
+	useWARP := g.usesWARP(route.ID, route.Tier, false)
 	for attempts < g.cfg.Retry.MaxAttempts {
 		if ctx.Err() != nil {
 			// Same guard as the anonymous loop: an exhausted request budget
@@ -1122,17 +1010,29 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route models.Route, bodies 
 			return nil, err, attempts
 		}
 		proxy := nodes.Proxy(node)
-		if proxy == nil {
-			lastErr = errors.New("upstream key has no proxy binding")
-			break
-		}
-		if proxy.pool {
-			req.Close = true
+		if !useWARP {
+			if proxy == nil {
+				lastErr = errors.New("upstream key has no proxy binding")
+				break
+			}
+			if proxy.pool {
+				req.Close = true
+			}
 		}
 		keyID := config.KeyDisplayID(node.key)
-		setRequestCredential(ctx, route.Tier, keyID, "key", false, proxy)
+		if useWARP {
+			setRequestCredential(ctx, route.Tier, keyID, "key", false, nil)
+		} else {
+			setRequestCredential(ctx, route.Tier, keyID, "key", false, proxy)
+		}
 		attemptStarted := time.Now()
-		resp, err := doInferenceAttempt(g.inferenceClient(proxy, baseURL, route.ID), req, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second, g.attemptTimeout)
+		var resp *http.Response
+		var egress string
+		if useWARP {
+			resp, egress, err = g.doWARPAttempt(ctx, req, baseURL, route.ID, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second)
+		} else {
+			resp, err = doInferenceAttempt(g.inferenceClient(proxy, baseURL, route.ID), req, time.Duration(g.cfg.Performance.FirstEventTimeoutSeconds)*time.Second, g.attemptTimeout)
+		}
 		attemptDuration := time.Since(attemptStarted)
 		if ctx.Err() != nil {
 			// The request budget expired while this attempt was in flight. A
@@ -1145,10 +1045,19 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route models.Route, bodies 
 			}
 			break
 		}
-		g.observeKeyResult(ctx, nodes, node, proxy, resp, err)
-		g.recordUpstreamAttempt(ctx, route, ids, attemptOffset+attempts, keyID, "key", false, proxy, resp, err, attemptDuration)
+		recordProxy := proxy
+		proxyLabel := ""
+		if useWARP {
+			recordProxy = warpProxy(egress)
+			proxyLabel = egress
+			g.observeKeyResultWARP(ctx, nodes, node, resp, err)
+		} else {
+			proxyLabel = config.RedactURL(proxy.name)
+			g.observeKeyResult(ctx, nodes, node, proxy, resp, err)
+		}
+		g.recordUpstreamAttempt(ctx, route, ids, attemptOffset+attempts, keyID, "key", false, recordProxy, resp, err, attemptDuration)
 		if err == nil && resp.StatusCode/100 == 2 {
-			g.logger.Debug("upstream accepted request", "component", "upstream", "event", "attempt_succeeded", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "proxy", config.RedactURL(proxy.name), "status", resp.StatusCode, "duration_ms", attemptDuration.Milliseconds())
+			g.logger.Debug("upstream accepted request", "component", "upstream", "event", "attempt_succeeded", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "proxy", proxyLabel, "status", resp.StatusCode, "duration_ms", attemptDuration.Milliseconds())
 			return resp, nil, attempts
 		}
 		// Request-shape errors are deterministic and must leave this tier without
@@ -1156,15 +1065,24 @@ func (g *Gateway) doKeyUpstream(ctx context.Context, route models.Route, bodies 
 		// tier in prefer order. Authentication, throttling, server, and transport
 		// failures remain retryable inside this tier.
 		if isNonRetryableClientResponse(resp, err) {
-			g.logger.Debug("upstream rejected a non-retryable request", "component", "upstream", "event", "attempt_rejected", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "status", resp.StatusCode, "proxy", config.RedactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
+			g.logger.Debug("upstream rejected a non-retryable request", "component", "upstream", "event", "attempt_rejected", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "status", resp.StatusCode, "proxy", proxyLabel, "duration_ms", attemptDuration.Milliseconds())
 			return resp, nil, attempts
 		}
 		lastResponse = resp
-		lastErr = asProxyUnavailable(proxy, err)
-		if err != nil {
-			g.logger.Debug("upstream transport attempt failed", "component", "upstream", "event", "attempt_transport_failed", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "proxy", config.RedactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds(), "error", err)
+		if useWARP && errors.Is(err, errWARPUnavailable) {
+			// No exit at all: another key would only wait on the same pool.
+			lastErr = err
+			break
+		}
+		if useWARP {
+			lastErr = err
 		} else {
-			g.logger.Debug("upstream returned a retryable response", "component", "upstream", "event", "attempt_retryable_response", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "status", resp.StatusCode, "proxy", config.RedactURL(proxy.name), "duration_ms", attemptDuration.Milliseconds())
+			lastErr = asProxyUnavailable(proxy, err)
+		}
+		if err != nil {
+			g.logger.Debug("upstream transport attempt failed", "component", "upstream", "event", "attempt_transport_failed", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "proxy", proxyLabel, "duration_ms", attemptDuration.Milliseconds(), "error", err)
+		} else {
+			g.logger.Debug("upstream returned a retryable response", "component", "upstream", "event", "attempt_retryable_response", "request_id", ids.Request, "attempt", attempts, "tier", route.Tier, "key_id", keyID, "status", resp.StatusCode, "proxy", proxyLabel, "duration_ms", attemptDuration.Milliseconds())
 		}
 	}
 	if lastResponse != nil {
@@ -1206,8 +1124,19 @@ func (g *Gateway) observeAnonymousResult(ctx context.Context, node *anonymousNod
 	g.syncProxyResult(ctx, node.proxy, status, err)
 	if err == nil && status/100 == 2 {
 		g.anonymous.MarkSuccess(node)
+		g.anonymous.NoteSuccess()
 	} else {
 		g.anonymous.MarkFailure(node, resp, err)
+		if resp != nil && peekNetworkAbuseBlock(resp) {
+			// An IP block is scoped to this exit; doAnonymousUpstream marks it
+			// blocked and opens the lane breaker only when no exit is left.
+			// Counting it here as well would stop the other exits early.
+			return
+		}
+		if pause, tripped := g.anonymous.NoteFailure(); tripped {
+			g.logger.Warn("anonymous lane circuit breaker opened",
+				"component", "upstream", "event", "anonymous_breaker_open", "status", status, "paused_for", pause.String())
+		}
 	}
 }
 
@@ -1293,11 +1222,19 @@ func (g *Gateway) recordUpstreamAttempt(ctx context.Context, route models.Route,
 
 // upstreamRequest builds the POST for one attempt: baseURL plus the protocol's
 // /v1/... route, carrying body. The header set follows the lane: setV1Headers
-// when models.IsV1Upstream(baseURL), setV2Headers otherwise. key is sent as
-// x-api-key (with anthropic-version) on the Anthropic protocol and as a Bearer
-// token on every other one; the anonymous lane passes anonymousZenKey.
+// when models.IsV1Upstream(baseURL), setV2Headers otherwise. Anthropic
+// endpoints on a v2 lane gain beta=true, matching the 2.x client; the 1.x lane
+// keeps its shape. key is sent as x-api-key (with anthropic-version) on the
+// Anthropic protocol and as a Bearer token on every other one; the anonymous
+// lane passes anonymousZenKey.
 func upstreamRequest(ctx context.Context, baseURL string, protocol wire.Protocol, body []byte, ids identity.RequestIDs, key string) (*http.Request, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + wire.Path(protocol)
+	if !models.IsV1Upstream(baseURL) {
+		endpoint = strings.TrimRight(baseURL, "/") + v2EndpointPath(baseURL, protocol)
+	}
+	if protocol == wire.Anthropic && !models.IsV1Upstream(baseURL) {
+		endpoint = withAnthropicBeta(endpoint)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -1320,6 +1257,40 @@ func upstreamRequest(ctx context.Context, baseURL string, protocol wire.Protocol
 	return req, nil
 }
 
+// v2EndpointPath returns the route a 2.1 client posts to on a v2 origin. The
+// 2.1 client groups /inference routes by provider family, so the family
+// segment sits between the origin and the protocol path (a 2.0.32 client
+// posted the protocol path directly, and that route still answers). Origins
+// that are not the /inference gateway — a custom base, or /zen/go — keep the
+// flat route, because the family grouping is specific to /inference.
+func v2EndpointPath(baseURL string, protocol wire.Protocol) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || !strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), "/inference") {
+		return wire.Path(protocol)
+	}
+	family := "openai"
+	if protocol == wire.Anthropic {
+		family = "anthropic"
+	}
+	return "/" + family + wire.Path(protocol)
+}
+
+// withAnthropicBeta marks an Anthropic endpoint as beta the way the OpenCode
+// 2.x client does, preserving any query a configured base URL already carries.
+func withAnthropicBeta(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	query := parsed.Query()
+	if query.Get("beta") == "true" {
+		return endpoint
+	}
+	query.Set("beta", "true")
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
 // setV1Headers renders the v1 lane's header set, that of an OpenCode 1.19.3
 // model request on its opencode provider, as captured from the official
 // release: the AI SDK User-Agent of the package serving the protocol, both
@@ -1339,7 +1310,7 @@ func setV1Headers(header http.Header, protocol wire.Protocol, body []byte, ids i
 		message = identity.AscendingID("msg", time.Now())
 	}
 	header.Set("x-opencode-request", message)
-	header.Set("x-opencode-project", v1ProjectID(ids.Project))
+	header.Set("x-opencode-project", projectID(ids.Project))
 	if ids.ParentSession != "" {
 		parent := identity.CanonicalSessionID(ids.ParentSession)
 		header.Set("x-opencode-parent-session-id", parent)
@@ -1353,26 +1324,35 @@ func setV1Headers(header http.Header, protocol wire.Protocol, body []byte, ids i
 }
 
 // setV2Headers renders the OpenCode 2.x CLI header set the v2 gates
-// fingerprint: the "opencode/<channel>/<version>/cli" User-Agent, every
-// session header (x-opencode-session, x-opencode-session-id,
-// x-session-affinity, X-Session-Id) set to the same descending-encoded id,
-// and a bare 40-character hex x-opencode-project. The v2 gate rejects
-// x-opencode-request and canonical prj_* project ids with 403 FreeTierError,
-// so neither is sent. Anthropic requests carry a fixed anthropic-beta set.
+// fingerprint: the "opencode/<channel>/<version>/cli" User-Agent, the
+// client's child session as x-opencode-session-id, the conversation affinity
+// (the canonical parent when one is present) as x-opencode-session,
+// x-session-affinity and X-Session-Id, and a bare 40-character hex
+// x-opencode-project. The v2 gate rejects x-opencode-request and canonical
+// prj_* project ids with 403 FreeTierError, so neither is sent. Anthropic
+// requests carry a fixed anthropic-beta set; upstreamRequest adds
+// anthropic-version and the beta query.
 func setV2Headers(header http.Header, protocol wire.Protocol, ids identity.RequestIDs) {
-	header.Set("Accept", "application/json, text/event-stream")
 	header.Set("x-opencode-client", "cli")
-	header.Set("x-opencode-session", ids.Session)
-	header.Set("x-session-affinity", ids.Session)
-	header.Set("X-Session-Id", ids.Session)
-	header.Set("User-Agent", httpx.V2UserAgent())
-	header.Set("x-opencode-session-id", ids.Session)
-	header.Set("x-opencode-project", v2ProjectID(ids.Project))
+	rootSession := ids.Session
 	if ids.ParentSession != "" {
-		header.Set("x-parent-session-id", ids.ParentSession)
+		parent := identity.CanonicalSessionID(ids.ParentSession)
+		rootSession = parent
+		header.Set("x-opencode-parent-session-id", parent)
+		header.Set("x-parent-session-id", parent)
 	}
+	childSession := ids.ChildSession
+	if childSession == "" {
+		childSession = ids.Session
+	}
+	header.Set("x-session-affinity", rootSession)
+	header.Set("X-Session-Id", rootSession)
+	header.Set("x-opencode-session", rootSession)
+	header.Set("x-opencode-session-id", childSession)
+	header.Set("User-Agent", httpx.V2UserAgent())
+	header.Set("x-opencode-project", projectID(ids.Project))
 	if protocol == wire.Anthropic {
-		header.Set("anthropic-beta", "interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+		header.Set("anthropic-beta", "interleaved-thinking-2025-05-14")
 	}
 }
 
@@ -1390,20 +1370,9 @@ func v1ProviderUtils(protocol wire.Protocol) string {
 	}
 }
 
-// gitCommitPattern matches the git root commit hash OpenCode 1.x uses as its
-// project id.
+// gitCommitPattern matches the git root commit hash OpenCode uses as its
+// project id on both lanes.
 var gitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
-
-// v1ProjectID renders the project header the way the OpenCode 1.x client
-// does: the git root commit hash of the project, or "global" outside a git
-// repository. A genuine value from a v1 client is kept verbatim; any other
-// project is hashed into the commit shape (see v2ProjectID).
-func v1ProjectID(project string) string {
-	if project == "global" || gitCommitPattern.MatchString(project) {
-		return project
-	}
-	return v2ProjectID(project)
-}
 
 // v1AnthropicBetaRequest holds the Messages body fields the AI SDK
 // anthropic provider derives beta flags from. Fields whose JSON type varies
@@ -1547,13 +1516,16 @@ func anthropicSupportsStructuredOutput(model string) bool {
 	return strings.Contains(model, "claude-")
 }
 
-// v2ProjectID renders the project header in the shape the OpenCode 2.x CLI
-// sends to the v2 gates: a bare 40-character lowercase hex id, here the first
-// 20 bytes of a domain-separated SHA-256 of the project. The value itself is
-// not checked upstream, only its shape, but hashing keeps one project mapped
-// to one stable upstream project id. v1ProjectID reuses it to fit a
-// non-genuine project into the git commit shape.
-func v2ProjectID(project string) string {
+// projectID renders the project header in the shape both lanes use: the
+// genuine git root commit hash or "global" is kept verbatim, and any other
+// project is hashed into the same 40-character lowercase hex shape. The value
+// itself is not checked upstream, only its shape, but hashing keeps one
+// project mapped to one stable upstream project id and masks a caller's
+// prj_*-style project, which the v2 gate rejects.
+func projectID(project string) string {
+	if project == "global" || gitCommitPattern.MatchString(project) {
+		return project
+	}
 	sum := sha256.Sum256([]byte("opencode-project\x00" + project))
 	return hex.EncodeToString(sum[:20])
 }

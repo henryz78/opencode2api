@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"opencode2api/internal/jsonutil"
 	wire "opencode2api/internal/protocol"
+	"opencode2api/internal/warp"
 )
 
 // Config is the service configuration stored in config.json.
@@ -31,6 +33,7 @@ type Config struct {
 	ZenKeys           []string                     `json:"zen_keys"`
 	GoKeys            []string                     `json:"go_keys"`
 	Anonymous         bool                         `json:"anonymous"`
+	Warp              WarpConfig                   `json:"warp"`
 	Proxies           []string                     `json:"proxies"`
 	ProxyFile         string                       `json:"proxyfile"`
 	Upstream          UpstreamConfig               `json:"upstream"`
@@ -62,6 +65,57 @@ type ReasoningConfig struct {
 	EffortByModel map[string]string `json:"effort_by_model,omitempty"`
 }
 
+// WarpConfig controls the optional Cloudflare WARP egress. While enabled,
+// free-model traffic on the anonymous lane and the free Zen-key fallback is
+// sent through a userspace WireGuard tunnel instead of any configured proxy.
+// PoolSize is the number of registered WARP exits kept warm (the last one is
+// held as hot standby); Stack selects the tunnel's address family. Initialization
+// is fail-closed: a configuration that enables WARP is rejected when no exit
+// can be established.
+type WarpConfig struct {
+	Enabled  bool   `json:"enabled"`
+	PoolSize int    `json:"pool_size,omitempty"`
+	Stack    string `json:"stack,omitempty"`
+	// SourceIPv6 is an outer IPv6 prefix (usually a routed /64) each WARP exit
+	// binds its WireGuard socket to. Rotating the source is what gives a
+	// replacement exit a new public egress; without it, exits share one
+	// address and an egress-scoped free quota stays exhausted.
+	SourceIPv6 string `json:"source_ipv6,omitempty"`
+}
+
+// Normalize fills the defaults and canonicalizes the stack name.
+func (w *WarpConfig) Normalize() error {
+	if w.PoolSize == 0 {
+		w.PoolSize = 2
+	}
+	if strings.TrimSpace(w.Stack) == "" {
+		w.Stack = string(warp.DefaultStack)
+	}
+	stack, err := warp.ParseStack(w.Stack)
+	if err != nil {
+		return fmt.Errorf("warp.stack: %w", err)
+	}
+	w.Stack = string(stack)
+	if w.PoolSize < 1 || w.PoolSize > 32 {
+		return errors.New("warp.pool_size must be between 1 and 32")
+	}
+	w.SourceIPv6 = strings.TrimSpace(w.SourceIPv6)
+	if w.SourceIPv6 != "" {
+		prefix, err := netip.ParsePrefix(w.SourceIPv6)
+		if err != nil || !prefix.Addr().Is6() || prefix.Addr().Is4In6() {
+			return fmt.Errorf("warp.source_ipv6: %q is not an IPv6 prefix", w.SourceIPv6)
+		}
+		if prefix.Bits() > 64 {
+			return fmt.Errorf("warp.source_ipv6: %s must be /64 or shorter", prefix)
+		}
+		if stack != warp.StackIPv6 {
+			return errors.New("warp.source_ipv6 requires warp.stack to be \"ipv6\"; an IPv4 stack cannot present an IPv6 egress")
+		}
+		w.SourceIPv6 = prefix.Masked().String()
+	}
+	return nil
+}
+
 // UpstreamConfig holds the base URLs of the OpenCode origins. The gateway
 // picks the request shape from the base URL (models.IsV1Upstream): one ending
 // in /zen is the v1 lane, any other a v2 lane.
@@ -75,9 +129,9 @@ type UpstreamConfig struct {
 	// CLI shape. The WebUI also reads the plan's quota from its /v1/usage.
 	Go string `json:"go"`
 	// Anonymous is the v2 /inference origin of the keyless free tier. The
-	// anonymous lane tries the v1 /zen origin (models.V1Base, not Zen) first
-	// and falls back to this one, which is skipped when it equals the v1
-	// origin. Empty means https://opencode.ai/inference.
+	// anonymous lane uses only this origin: the v1 /zen fallback is retired for
+	// free models and its call site is commented out. Empty means
+	// https://opencode.ai/inference.
 	Anonymous string `json:"anonymous"`
 }
 
@@ -100,6 +154,46 @@ type ModelsConfig struct {
 	// FreeOnly limits discovery and routing to free models, even when Zen or
 	// Go keys could serve paid ones. Free models may still fall back to keys.
 	FreeOnly bool `json:"free_only"`
+	// AnonymousBackoff configures a circuit breaker for the keyless lane:
+	// after Threshold consecutive failed attempts, or when every exit is under
+	// the free tier's IP block, the lane pauses for BaseHours, doubling on
+	// every further trip up to MaxHours. An absent block leaves the lane
+	// unpaused, which is the previous behavior.
+	AnonymousBackoff *AnonymousBackoffConfig `json:"anonymous_backoff,omitempty"`
+}
+
+// AnonymousBackoffConfig tunes the keyless lane's circuit breaker. Zero fields
+// take the defaults shown in Normalize.
+type AnonymousBackoffConfig struct {
+	Threshold int `json:"threshold,omitempty"`
+	BaseHours int `json:"base_hours,omitempty"`
+	MaxHours  int `json:"max_hours,omitempty"`
+}
+
+// Normalize fills the defaults and rejects nonsensical windows.
+func (b *AnonymousBackoffConfig) Normalize() error {
+	if b == nil {
+		return nil
+	}
+	if b.Threshold == 0 {
+		b.Threshold = 6
+	}
+	if b.BaseHours == 0 {
+		b.BaseHours = 1
+	}
+	if b.MaxHours == 0 {
+		b.MaxHours = 24
+	}
+	if b.Threshold < 1 {
+		return errors.New("models.anonymous_backoff.threshold must be at least 1")
+	}
+	if b.BaseHours < 1 {
+		return errors.New("models.anonymous_backoff.base_hours must be at least 1")
+	}
+	if b.MaxHours < b.BaseHours {
+		return errors.New("models.anonymous_backoff.max_hours must not be smaller than base_hours")
+	}
+	return nil
 }
 
 // LoggingConfig sets the minimum log level (debug, info, warn or error) and
@@ -131,8 +225,10 @@ type WebUIConfig struct {
 // handling: the connection pool limits (MaxConnsPerHost 0 means unlimited),
 // the dial timeout, the base cooldown after an upstream key or anonymous
 // proxy fails, and the per-attempt and first-event timeouts.
-// AttemptTimeoutSeconds 0 leaves only the request-level timeout in place, and
-// FirstEventTimeoutSeconds 0 disables the first-event wait.
+// AttemptTimeoutSeconds 0 leaves only the request-level timeout in place,
+// FirstEventTimeoutSeconds 0 disables the first-event wait, MaxAnonymousExits
+// 0 uses the built-in cap, and FreeTierBlockSeconds 0 uses the built-in
+// cool-down for an exit the free tier flagged.
 type PerformanceConfig struct {
 	MaxIdleConns             int `json:"max_idle_conns"`
 	MaxIdleConnsPerHost      int `json:"max_idle_conns_per_host"`
@@ -142,6 +238,16 @@ type PerformanceConfig struct {
 	FailureCooldownSeconds   int `json:"failure_cooldown_seconds"`
 	AttemptTimeoutSeconds    int `json:"attempt_timeout_seconds"`
 	FirstEventTimeoutSeconds int `json:"first_event_timeout_seconds"`
+	// MaxAnonymousExits bounds how many distinct static proxy exits one
+	// anonymous request may walk. Each exit may still try the v2 /inference
+	// lane and the v1 /zen lane, so the upstream request count can be twice
+	// this value; a rotating #pool entry is drawn once per retry.max_attempts
+	// instead.
+	MaxAnonymousExits int `json:"max_anonymous_exits"`
+	// FreeTierBlockSeconds is how long an exit the free tier flagged as
+	// abusive stays out of the anonymous cursor. Upstream does not publish
+	// the block duration, so the default is a conservative 15 minutes.
+	FreeTierBlockSeconds int `json:"free_tier_block_seconds"`
 }
 
 // AttemptTimeout returns the bound for a single upstream attempt. When
@@ -185,6 +291,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg := Config{
 		Listen:      "127.0.0.1:8080",
+		Warp:        WarpConfig{PoolSize: 2, Stack: string(warp.DefaultStack)},
 		Upstream:    UpstreamConfig{Zen: "https://opencode.ai/zen", Go: "https://opencode.ai/zen/go", Anonymous: "https://opencode.ai/inference"},
 		Retry:       RetryConfig{MaxAttempts: 3, TimeoutSeconds: 300},
 		Models:      ModelsConfig{RefreshSeconds: 300, Protocols: map[string]string{}},
@@ -212,11 +319,17 @@ func Normalize(path string, cfg Config) (Config, error) {
 	if err := cfg.Rotation.Validate(nil); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.Warp.Normalize(); err != nil {
+		return Config{}, err
+	}
 	trimList(&cfg.ServerKeys)
 	remapServerKeyMetadata(&cfg)
 
 	trimList(&cfg.ZenKeys)
 	trimList(&cfg.GoKeys)
+	// A placeholder copied from the documentation is not a credential. Treating
+	// it as one routes every free-model failure into a 401 from the keyed tier.
+	cfg = DropPlaceholderKeys(cfg)
 	cfg.ProxyFile = strings.TrimSpace(cfg.ProxyFile)
 	if err := resolveProxyFiles(path, &cfg); err != nil {
 		return Config{}, err
@@ -266,6 +379,12 @@ func Normalize(path string, cfg Config) (Config, error) {
 	if cfg.Performance.FirstEventTimeoutSeconds < 0 || cfg.Performance.FirstEventTimeoutSeconds > 86400 {
 		return Config{}, errors.New("performance.first_event_timeout_seconds must be between 0 and 86400 (0 disables the first-event timeout)")
 	}
+	if cfg.Performance.MaxAnonymousExits < 0 {
+		return Config{}, errors.New("performance.max_anonymous_exits must not be negative (0 uses the built-in cap)")
+	}
+	if cfg.Performance.FreeTierBlockSeconds < 0 {
+		return Config{}, errors.New("performance.free_tier_block_seconds must not be negative (0 uses the built-in cool-down)")
+	}
 	if cfg.Logging.Level != "debug" && cfg.Logging.Level != "info" && cfg.Logging.Level != "warn" && cfg.Logging.Level != "error" {
 		return Config{}, errors.New("logging.level must be debug, info, warn, or error")
 	}
@@ -305,6 +424,9 @@ func Normalize(path string, cfg Config) (Config, error) {
 		default:
 			return Config{}, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
 		}
+	}
+	if err := cfg.Models.AnonymousBackoff.Normalize(); err != nil {
+		return Config{}, err
 	}
 	for model, protocol := range cfg.Models.Protocols {
 		if model == "" || !wire.Valid(wire.Protocol(protocol)) {

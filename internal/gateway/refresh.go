@@ -251,8 +251,19 @@ func (g *Gateway) refreshZen(ctx context.Context) []string {
 // node per attempt: one pass over the nodes, or up to retry.max_attempts
 // attempts when #pool transports exist. base only labels the logs.
 func (g *Gateway) refreshAnonymousTier(ctx context.Context, base string) []string {
+	if !g.anonymous.AllowAttempt() {
+		// The breaker is open, or its half-open probe is already running:
+		// refreshing now would only add to the block. Keeping nil leaves the
+		// previous catalog in place.
+		g.logger.Debug("anonymous model catalog refresh skipped; circuit breaker is not closed", "component", "models", "event", "anonymous_refresh_paused", "upstream", config.RedactURL(base))
+		return nil
+	}
+	defer g.anonymous.ReleaseProbe()
+	if g.warp != nil {
+		return g.refreshAnonymousWARP(ctx, base)
+	}
 	cursor := g.anonymous.CursorFor("")
-	limit := g.anonymous.Len()
+	limit := min(g.anonymous.Len(), g.maxAnonymousExits())
 	if g.anonymous.HasPool() && g.cfg.Retry.MaxAttempts > limit {
 		limit = g.cfg.Retry.MaxAttempts
 	}
@@ -265,8 +276,8 @@ func (g *Gateway) refreshAnonymousTier(ctx context.Context, base string) []strin
 		var models []string
 		var status int
 		var err error
-		// List models on the v1 origin first, then fall back to the
-		// configured v2 /inference origin (see anonymousUpstreams).
+		// List models on the configured v2 /inference origin; the v1 fallback
+		// is retired (see anonymousUpstreams).
 		for _, upstream := range g.anonymousUpstreams() {
 			models, status, err = modelcatalog.FetchModels(refreshCtx, node.proxy.client, upstream, anonymousZenKey)
 			if err == nil || isProxyFailure(err) {
@@ -277,10 +288,58 @@ func (g *Gateway) refreshAnonymousTier(ctx context.Context, base string) []strin
 		cancel()
 		if err == nil {
 			g.anonymous.MarkSuccess(node)
+			g.anonymous.NoteSuccess()
 			return models
 		}
 		g.anonymous.MarkFailure(node, nil, err)
 		g.logger.Debug("anonymous model catalog refresh attempt failed", "component", "models", "event", "anonymous_refresh_attempt_failed", "upstream", config.RedactURL(base), "attempt", attempt, "proxy", config.RedactURL(node.proxy.name), "error", err)
+	}
+	g.logger.Warn("anonymous model catalog refresh failed", "component", "models", "event", "anonymous_refresh_failed", "upstream", config.RedactURL(base))
+	return nil
+}
+
+// refreshAnonymousWARP lists models through WARP instead of an anonymous
+// proxy. The catalog is what makes free models discoverable at all, so with
+// the WARP switch on it must not depend on a working proxy pool. One lease per
+// attempt; the pool learns about a blocked exit through Report.
+func (g *Gateway) refreshAnonymousWARP(ctx context.Context, base string) []string {
+	limit := max(g.cfg.Retry.MaxAttempts, 1)
+	for attempt := 1; attempt <= limit; attempt++ {
+		refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lease, err := g.warp.Acquire(refreshCtx)
+		if err != nil {
+			cancel()
+			if ctx.Err() != nil {
+				return nil
+			}
+			continue
+		}
+		owned, err := g.newWarpLease(lease, false)
+		if err != nil {
+			lease.Release()
+			cancel()
+			g.logger.Warn("anonymous model catalog refresh could not use WARP", "component", "models", "event", "anonymous_refresh_failed", "upstream", config.RedactURL(base), "error", err)
+			return nil
+		}
+		egress := "warp:" + lease.EgressKey()
+		var listed []string
+		var status int
+		for _, upstream := range g.anonymousUpstreams() {
+			listed, status, err = modelcatalog.FetchModels(refreshCtx, owned.regular, upstream, anonymousZenKey)
+			if err == nil || isProxyFailure(err) {
+				break
+			}
+		}
+		if status > 0 {
+			g.warp.Report(lease, status, nil)
+		}
+		owned.close()
+		cancel()
+		if err == nil {
+			g.anonymous.NoteSuccess()
+			return listed
+		}
+		g.logger.Debug("anonymous model catalog refresh attempt failed", "component", "models", "event", "anonymous_refresh_attempt_failed", "upstream", config.RedactURL(base), "attempt", attempt, "proxy", egress, "error", err)
 	}
 	g.logger.Warn("anonymous model catalog refresh failed", "component", "models", "event", "anonymous_refresh_failed", "upstream", config.RedactURL(base))
 	return nil

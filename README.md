@@ -1,6 +1,6 @@
 # opencode2api
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md)
+[English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md) | [Italiano](README.it.md)
 
 A Go gateway for **OpenCode Zen and Zen Go**. It exposes Chat Completions, Responses, and Anthropic Messages endpoints, translates between their native protocols, and manages upstream keys and proxies.
 
@@ -12,6 +12,7 @@ The executable includes the WebUI. Running the service requires no Node.js runti
 - Text, images, reasoning, function tools, tool calls, and tool results; file content where the target protocol can represent it.
 - Separate Zen and Go key pools, configurable tier preference, retries, and session affinity.
 - Optional anonymous Zen access with the OpenCode `public` credential.
+- Optional userspace Cloudflare WARP egress for free-model traffic, without TUN or root.
 - Direct, HTTP, HTTPS, SOCKS5, and SOCKS5H connections, including a proxy file.
 - Dynamic model discovery, native protocol metadata, and disk caches.
 - A separate management port with configuration editing, a Playground, diagnostics, token statistics, and live logs.
@@ -21,6 +22,22 @@ The executable includes the WebUI. Running the service requires no Node.js runti
 - Sticky `sota` / `sweet` model groups with ordering, failure fallback, streaming protection, and persisted state.
 
 See the [management console guide (Chinese)](docs/management.zh-CN.md) for the new pages and configuration.
+
+## Sponsors
+
+<table>
+  <tr>
+    <td width="190" align="center">
+      <a href="https://www.ipwo.net/?ref=githubopencode2api">
+        <img src="assets/IPWO.png" width="163" alt="IPWO">
+      </a>
+    </td>
+    <td>
+      <a href="https://www.ipwo.net/?ref=githubopencode2api">IPWO</a> residential proxies provide flexible network connectivity for AI development and API workflows, covering 195+ countries and regions with HTTP(S) and SOCKS5 support.<br>
+      Suitable for cross-region network testing, compliant data collection, and automated development. Dynamic, static, and unlimited proxy plans are available, with free testing and region selection. Discount code: <b>0200</b>.
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
@@ -36,7 +53,7 @@ go build -o opencode2api ./cmd/opencode2api
 Before starting, edit `config.json`:
 
 1. Replace `server_keys` with your own local API key.
-2. Supply Zen or Go keys. Alternatively, set `anonymous: true` and empty both upstream key arrays.
+2. Optionally supply Zen or Go keys. The example enables the anonymous free lane and leaves both upstream key arrays empty.
 3. Replace `webui.password`. The example enables the WebUI with username `admin`.
 
 ```bash
@@ -77,6 +94,8 @@ docker compose restart
 
 The container runs the service as an unprivileged user. Compose uses a read-only root filesystem, a writable state volume, and a temporary `/tmp` filesystem.
 
+WARP needs only outbound UDP (Cloudflare endpoint port `2408`), so the image's non-root, no-`NET_ADMIN` setup still works; do not switch to host networking or add `--cap-add` for it. If the container network blocks UDP, enabling WARP fails at startup.
+
 | Compose variable            | Default  | Effect                                            |
 | --------------------------- | -------- | ------------------------------------------------- |
 | `OPENCODE2API_VERSION`      | `latest` | Image tag. Pin a release tag for a fixed version. |
@@ -106,7 +125,7 @@ A `proxyfile` used in Docker must also be available inside the container at the 
 
 ### Railway
 
-Use the published image, keep Railway's `PORT`, and mount a persistent volume at `/var/lib/opencode2api`. When `PORT` is set, the image serves both the API and WebUI on that port; configure the service from the WebUI after the first start.
+Use the published image, keep Railway's `PORT`, and mount a persistent volume at `/var/lib/opencode2api`. When `PORT` is set, the image serves both the API and WebUI on that port.
 
 ## API usage
 
@@ -206,22 +225,22 @@ Each `/v1/models` entry also carries `cost` (USD per million tokens: `input`, `o
 
 ### Anonymous access and fallback
 
-With `anonymous: true`, eligibility for the anonymous lane is determined in this order:
+With `anonymous: true`, anonymous eligibility is decided in this order:
 
-- When OpenCode metadata describes the model, both input and output costs must be zero and the model must not be deprecated. Known paid models are excluded even if their ID contains `free`.
-- While metadata is pending or does not describe the model, an ID containing `free` (case-insensitively) is the compatibility fallback.
+- When metadata describes the model, input and output cost must both be zero and the model must not be deprecated. A known paid model is excluded even if its ID contains `free`.
+- When metadata is pending or does not contain the model, an ID containing `free` is used as the compatibility fallback.
 
 Eligibility is a routing decision; the upstream can still reject or rate-limit the request. Anonymous requests use `public` in the upstream authentication header.
 
-For each anonymous proxy, the legacy `/zen/v1` lane is tried first, followed by the configured `/inference` lane. Each lane uses its own headers and tool definitions; a client's read-tool name is restored in returned tool calls when the legacy lane requires an alias.
-
 The routing sequence is:
 
-1. For an eligible model, try each available anonymous proxy once.
+1. For an eligible model, try up to `performance.max_anonymous_exits` available anonymous proxies once each. Every proxy uses the v2 `/inference` lane; the v1 `/zen` fallback is retired for free models and its call site is commented out.
 2. Try authenticated tiers in `prefer` order, using only tiers with a configured key and a route for that model.
 3. Apply `retry.max_attempts` separately to each authenticated tier.
 
-Anonymous attempts are not cut short by `retry.max_attempts`, but all attempts share the request timeout. Network errors, authentication failures, rate limits, and server errors can rotate keys. Other 4xx responses end the current tier; another available tier may still be tried.
+Anonymous attempts are not cut short by `retry.max_attempts`, but all attempts share the request timeout. Network errors, authentication failures, rate limits, and server errors can rotate exits. A request-level `400`/`413`/`422` (for example `context_length_exceeded`) ends the request immediately: another exit or tier cannot change the request. An IP-level abuse `403` blocks only that exit; if every exit is blocked, the gateway stops walking them, and an authenticated Go key can still serve the request.
+
+When the free tier is blocked for the whole deployment (an IP-level `403` abuse response), retrying only extends the penalty, so an optional lane-level circuit breaker can stop the probing. With `models.anonymous_backoff` configured, `threshold` consecutive failed anonymous attempts or an all-exits IP block pause the whole anonymous lane for `base_hours`, doubling on every further trip up to `max_hours`. A single non-abuse `403` or `429` does not open the breaker; it counts toward the threshold. While paused, requests skip the lane entirely: no proxy is drawn, no upstream request is made, and routing goes straight to the authenticated tiers. Catalog refreshes and availability probes honour the pause as well. When the window expires one request wins the half-open probe; success closes the breaker and restores the free lane, failure opens the next, longer window. The block is absent, and so the breaker stays off, by default.
 
 Requests are encoded for each tier's own protocol. With `performance.first_event_timeout_seconds` enabled, a successful SSE response is held until the first complete data event. A timeout or disconnect before that event uses the existing key/proxy retry budget; comments do not satisfy the timeout. Once released downstream, the stream is never replayed. The default is `0` (disabled); try `15` seconds for upstreams that accept requests but send no events. This bounds the first event, not the first text token, and does not apply to System One. Rotation aliases use their separate `rotation.first_output_seconds` timeout. A recognized stale Responses reasoning reference can trigger one repair pass; selected-key diagnostics never use that replay.
 
@@ -229,9 +248,31 @@ When only anonymous access is configured, `/v1/models` exposes only models eligi
 
 Free models never need a Zen key: with `anonymous: true` they are served by the public lane, and a configured key is only their fallback. To keep keys but expose free models only, set `models.free_only: true`. Paid models then disappear from `/v1/models`, direct requests for them are rejected, and rotation aliases keep only free members; free models may still fall back to the configured keys.
 
+### WARP egress for free models
+
+`warp.enabled` moves every free-model request on a free lane — the anonymous lane, the free-model fallback through a Zen key, free-model availability probes, and the anonymous catalog refresh — onto a userspace Cloudflare WARP tunnel. Those requests use no proxy, so the free tier sees the WARP exit address instead of a configured node. Go-plan keys and paid models keep their proxy bindings.
+
+The tunnel lives inside the gateway process: it registers a WARP device, speaks WireGuard over UDP to Cloudflare, and terminates in a userspace network stack. It needs no TUN device, root, `NET_ADMIN`, or routing-table change, but the host or container must be able to send UDP to Cloudflare's endpoint (port `2408`). Registration and the `warp=on` trace probe run at startup; if WARP cannot initialize, startup fails instead of silently falling back to proxies. Enabling it through the WebUI is also fail-closed: a bad value returns an error and the previous runtime keeps serving.
+
+`warp.pool_size` (1–32, default `2`) is an upper bound, not a fixed count. The first exit registers synchronously and gates readiness; the pool then registers half of the ceiling (at least one) in the background, so a burst finds warm exits instead of waiting for registrations. The active ring follows concurrency: one exit per in-flight lease plus a spare, never more than the maximum. Surplus exits that stay idle for 60 seconds are retired, so a quiet period scales back down. An exit answered with 429 or 403 is retired immediately and a pre-registered exit takes its place — a free-model request keeps switching to another exit and only returns the last 429 to the client once `retry.max_attempts` is spent — and the retired exit is re-registered in the background right away. Registrations are serialized; Cloudflare's 429/Retry-After answer sets the pacing instead of a fixed delay. If the colo hands out fewer distinct egress blocks than the preload, the pool backs off instead of registering forever, and automatic free-model probes skip a pool without a spare exit and stop the sweep after one probe retires an exit. `warp.stack` selects `ipv6` (default), `ipv4`, or `dual`.
+
+The upstream free quota is scoped to the egress block, so rotation only helps when a replacement leaves from a different one: an IPv6 exit is keyed and cooled by its `/64` for 30 minutes, an IPv4 exit by its `/32`. Cloudflare's WARP IPv4 egress is usually one shared NAT address, which other users routinely exhaust; the IPv6 stack gets an egress derived from the outer WireGuard source. Set `warp.source_ipv6` to an IPv6 prefix routed to the host (usually a `/64`), with the default `ipv6` stack to make every exit bind its own source address from that prefix. The prefix needs `IPV6_FREEBIND` on Linux (the gateway sets it) or addresses already assigned to an interface. Endpoint family is not probed in advance: the handshake tries IPv6 endpoints first and falls back to IPv4 ones when none answer (the exit then egresses from the shared address). Leave `source_ipv6` empty to keep the host's default source address. On networks whose WARP egress pool is saturated every fresh exit can still answer 429; the gateway then churns exits without ever surfacing a 429 before the attempt budget is spent. `/healthz` reports a `warp` block and answers 503 while WARP is enabled but no exit is active; `no_healthy_proxies` only blocks readiness when WARP is off or Go keys need proxies. Diagnostics acquire an exit but never rotate or penalize it. Turning WARP off restores proxy routing for the free lanes.
+
+### Official system prompt
+
+Every shaped free-model request carries the OpenCode CLI's own system prompt — its base instructions, the `<env>` block, and the built-in skill listing — because the free tier validates agent-shaped traffic. The v1 `/zen` lane uses the 1.x tool names; `/inference` and `/zen/go` use the 2.x names. The environment block names the requested model, the gateway's working directory, the platform, and a UTC date.
+
+Injection is protocol-aware: Chat system and developer messages are folded into one leading `system` message, Anthropic receives a `system` value (a string, or a leading text block when the caller sent blocks), and Responses receives `instructions`. A body whose system content already contains the marker `You are opencode, an interactive CLI tool` is passed through, so a client that sends the official prompt never gets a second copy. Free models served by a Zen or Go key receive the same shaping even though they still leave through that tier's proxy.
+
+### Tool shaping
+
+On every shaped free-model request the gateway replaces each named client tool with an opaque wire name, `clint_` plus the first 12 hex characters of the client name's SHA-256 (collisions get a `_2`, `_3`, … suffix), and appends the complete official tool set for the lane: the 1.x definitions (`bash`, `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `websearch`, `write`) on `/zen`, and the 13-tool 2.x set on `/inference` and `/zen/go`. The digest is not cosmetic: the free tier refuses a shaped body that still carries another client's vocabulary — a Claude Code request that declares both `ReportFindings` and `ScheduleWakeup` is answered with `FreeUsageLimitError`, and removing either name lifts the refusal — so no client tool name reaches the wire. Requests without a `tools` array, with an empty one, or with a legacy `functions` array get the same official set; `tool_choice`, legacy `function_call`, and the tool-call history are rewritten to match. Responses built-in tools and Anthropic server tools are left untouched.
+
+Responses are restored to the names the client declared, for streaming and non-streaming replies, including a Chat tool name split across chunks. If the upstream calls an official tool the client never declared, that name passes through unchanged: the gateway does not replay or hide official tool calls.
+
 ### Free model availability
 
-The gateway probes models eligible under the free-model rules above, with a short request using their native protocol. It tries the enabled anonymous lane first and then one configured Zen Key. A valid completed response on either lane keeps the model enabled; the model is disabled in discovery and routing only when every attempted lane explicitly reports that the model does not exist or has been retired. Authentication errors, rate limits, timeouts, transport errors, 5xx responses, and malformed replies are inconclusive: they do not create a new disable, and are checked again in one hour. Probe traffic does not alter production key/proxy cooldowns or request statistics. It still reaches the upstream and may consume its free allowance.
+The gateway probes models whose IDs contain `free` (case-insensitive), or whose metadata reports zero input/output cost without deprecation, with a short request using its native protocol. It tries the enabled anonymous lane first and then one configured Zen Key. With `warp.enabled`, every probe lane leaves through WARP instead of a proxy; when no exit can be acquired the probe reports `warp_unavailable` and stays inconclusive. A valid completed response on either lane keeps the model enabled; the model is disabled in discovery and routing only when every attempted lane explicitly reports that the model does not exist or has been retired. Authentication errors, rate limits, timeouts, transport errors, 5xx responses, and malformed replies are inconclusive: they do not create a new disable, and are checked again in one hour. Probe traffic does not alter production key/proxy cooldowns or request statistics. It still reaches the upstream and may consume its free allowance.
 
 System One models use a native `noul` question asking whether 1 + 1 equals 2; they are never sent chat/tool payloads. Model discovery includes `native_protocol` and `supported_endpoints`; rotation aliases are listed only when Go keys and eligible models exist. Legacy v1.3.6 disables are cleared on load and scheduled for immediate recheck because those probes used invalid session IDs.
 
@@ -241,7 +282,7 @@ Manual control also pauses effort discovery for `reasoning.effort=auto`; learned
 
 State survives restarts in `config.json.<upstream-fingerprint>.availability.json`, separated by the Zen upstream URL. The background scheduler checks for due models once per minute, skips manually controlled models, and probes the rest sequentially, with a 60-second timeout per lane. No channels available means no automatic disable.
 
-Administration endpoints (login required; writes also require CSRF): `GET /api/models/availability`, `POST /api/models/restore` with `{"model":"MODEL_ID"}` (restores and takes manual control), and `POST /api/models/manual` with `{"model":"MODEL_ID","manual":true|false}` to switch between manual and automatic control.
+Administration endpoints (login required; writes also require CSRF): `GET /api/models/availability`, `POST /api/models/probe` (marks every automatic free model due and starts a probe sweep right away, so the WebUI's refresh status button re-probes instead of only reloading the cached view), `POST /api/models/restore` with `{"model":"MODEL_ID"}` (restores and takes manual control), and `POST /api/models/manual` with `{"model":"MODEL_ID","manual":true|false}` to switch between manual and automatic control.
 
 ### Sessions and proxies
 
@@ -249,9 +290,9 @@ Keys are initially spread across proxies. Real traffic can trigger proxy checks,
 
 A stable session hash selects the preferred key or anonymous proxy. Send an explicit `x-session-id` to separate independent conversations. The gateway also accepts the `x-opencode-session`, `x-session-affinity`, `session_id`, `conversation-id`, and `conversation_id` headers, the `conversation_id` and `metadata.session_id` body fields, and the session ID inside Claude Code's `metadata.user_id`.
 
-Sessions and projects the gateway derives itself are scoped to the caller's server key, so different keys never share an upstream session, preferred key, or anonymous proxy. Official OpenCode sessions (`ses_…`) sent by the client are kept as-is. Without an explicit ID, the system prompt and the first user message are used as a seed. Conversations under the same key that begin with the same system prompt and content can therefore still share affinity; give users who must stay isolated their own server keys. Changing pool membership can change the selected node.
+Sessions and projects the gateway derives itself are scoped to the caller's server key, so different keys never share an upstream session, preferred key, or anonymous proxy. Official OpenCode sessions (`ses_…`) sent by the client are kept as-is. Derived session ids are salted per process, so restarting the gateway re-mints them instead of resuming the upstream session of the previous run. Without an explicit ID, the system prompt and the first user message are used as a seed. Conversations under the same key that begin with the same system prompt and content can therefore still share affinity; give users who must stay isolated their own server keys. Changing pool membership can change the selected node.
 
-Cooldowns grow exponentially up to eight times `performance.failure_cooldown_seconds`. Authenticated keys honor a longer `Retry-After` in full; anonymous cooldowns cap it at the same eight-times limit, and proxy recovery clears their failure state. If every authenticated key is cooling down, routing may try the key whose cooldown ends first. If all static anonymous proxies are cooling down or unhealthy, routing may try an untried proxy, preferring healthy ones and the earliest cooldown.
+Cooldowns grow exponentially up to eight times `performance.failure_cooldown_seconds`, and a longer `Retry-After` is honored. A configured `models.anonymous_backoff` breaker is a separate lane-level guard: it pauses the whole anonymous lane for hours, while these cooldowns stay per exit and short. If every authenticated key is cooling down, routing may try the key whose cooldown ends first. Anonymous nodes still in cooldown are skipped.
 
 ## Configuration reference
 
@@ -265,15 +306,20 @@ See [config.example.json](config.example.json) for a complete starting configura
 | `server_keys`               | At least one local key is required.                                         |
 | `zen_keys`, `go_keys`       | At least one upstream key is required unless anonymous access is enabled.   |
 | `anonymous`                 | `false`.                                                                    |
+| `warp.enabled`              | `false`; free-lane traffic leaves through Cloudflare WARP and no proxy.    |
+| `warp.pool_size`            | `2`; upper bound on WARP exits (half pre-registered in the background; the active ring follows concurrency), 1–32. |
+| `warp.stack`                | `ipv6`; `ipv6`, `ipv4`, or `dual`.                                          |
+| `warp.source_ipv6`          | empty; IPv6 prefix (`/64`) each exit binds its outer source from; requires `stack = "ipv6"`. |
 | `prefer`                    | `go`; accepts `go` or `zen`.                                                |
 | `upstream.zen`              | `https://opencode.ai/zen`.                                                  |
 | `upstream.go`               | `https://opencode.ai/zen/go`.                                               |
-| `upstream.anonymous`        | `https://opencode.ai/inference`; the anonymous lane's fallback after `/zen`. |
+| `upstream.anonymous`        | `https://opencode.ai/inference`; the only anonymous lane (the retired `/zen` fallback is commented out in `anonymousUpstreams`). |
 | `proxies`                   | Falls back to `["direct"]` when both proxy sources are empty.               |
 | `proxyfile`                 | Optional; relative paths resolve beside the configuration file.             |
 | `models.refresh_seconds`    | `300`; minimum 1.                                                           |
 | `models.protocols`          | `{}`; per-model native protocol overrides.                                  |
 | `models.free_only`          | `false`; expose and route only free models, even with Zen or Go keys.       |
+| `models.anonymous_backoff`  | Absent (off); `{threshold, base_hours, max_hours}`, defaulting to `6`, `1`, `24`. |
 | `reasoning.effort`          | Empty (off); `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `none`. |
 | `reasoning.effort_by_model` | `{}`; per-model overrides of `reasoning.effort`.                            |
 
@@ -295,9 +341,9 @@ surfaces, so a forced level reaches a rung that the budget alone cannot express.
 }
 ```
 
-A level a client states explicitly always wins, so this only replaces a level
-nobody asked for: an absent one, or one derived from `thinking.budget_tokens`.
-Use `"none"` to remove reasoning from requests that do not ask for it.
+Explicit client disables remain disabled across protocol conversion: Anthropic
+`thinking.type="disabled"` and Chat/Responses effort `"none"` cannot be re-enabled
+by a configured default.
 
 Levels are reported faithfully in both directions. An explicit
 `output_config.effort` survives conversion instead of being shadowed by a
@@ -340,7 +386,7 @@ A pool entry is handled differently from a static proxy:
 | Connection reuse          | Keep-alive plus HTTP/2 multiplexing (`performance.*` pool settings) | A fresh TCP + CONNECT tunnel per request (`DisableKeepAlives`, no HTTP/2)    |
 | Failure cooldown          | 15s–120s exponential backoff, inflated by `Retry-After`             | None: the next request simply draws a new exit IP                             |
 | Health eviction           | Marked unhealthy, keys rebound, rechecked every 15 minutes          | Never evicted; the health check is skipped entirely                           |
-| Anonymous lane retries    | At most one attempt per configured proxy                            | Up to `retry.max_attempts`, cycling the pool entry                            |
+| Anonymous lane retries    | One visit per exit, up to `performance.max_anonymous_exits` exits   | Up to `retry.max_attempts`, cycling the pool entry                            |
 
 Use it when the endpoint behind the URL already performs the rotation and the pool's own exit IPs are individually rate-limited or flaky; the gateway then treats each attempt as a fresh endpoint instead of pinning the conversation to one exit. A single `#pool` entry is enough — you no longer need to list dozens of exits. Static entries keep the pooling behavior described below.
 
@@ -351,6 +397,8 @@ Use it when the endpoint behind the URL already performs the rotation and the po
 | `retry.max_attempts`                    | `3`     | Attempts per authenticated tier, including the first.  |
 | `retry.timeout_seconds`                 | `300`   | Total inference timeout, including stream consumption. |
 | `performance.attempt_timeout_seconds`   | `0`     | Whole-attempt bound; 0 uses the request timeout.       |
+| `performance.max_anonymous_exits`       | `8`     | Distinct static proxy exits per anonymous request.     |
+| `performance.free_tier_block_seconds`   | `900`   | Cool-down for an exit the free tier flagged.           |
 | `performance.connect_timeout_seconds`   | `5`     | Connection establishment timeout.                      |
 | `performance.failure_cooldown_seconds`  | `15`    | Base failure cooldown.                                 |
 | `performance.max_idle_conns`            | `2048`  | Idle connection limit per proxy transport.             |
@@ -416,14 +464,14 @@ After execution, the management endpoint returns HTTP 200 with the actual result
 
 ### Interface language
 
-The WebUI loads its translations from `webui/js/i18n.js`. It ships with **简体中文** (default), **English**, and **Tiếng Việt**. The original Simplified Chinese copy lives in `index.html` and `webui/js/` and stays the fallback for every string without a translation, so adding a language never rewrites the original.
+The WebUI loads its translations from `webui/js/i18n.js`. It ships with **简体中文** (default), **English**, **Tiếng Việt**, and **Italiano**. The original Simplified Chinese copy lives in `index.html` and `webui/js/` and stays the fallback for every string without a translation, so adding a language never rewrites the original.
 
 - The selector sits in the topbar, and on the login card.
 - The choice is stored in `localStorage` under `opencode2api.ui.lang`.
 - Switching re-renders both static text (`data-i18n`, `data-i18n-attr`) and JavaScript-generated text without reloading the page.
 - Dates and times follow the selected locale as well.
 
-To add a language, add one block to `DICTIONARY` in `webui/js/i18n.js`, then register its code in `SUPPORTED`, `LABELS`, and `DATE_LOCALES`.
+To add a language, add one block to `DICTIONARY` in `webui/js/i18n.js`, then register its code in `SUPPORTED`, `LABELS`, `FLAGS`, and `DATE_LOCALES`, and add it to the `browserLocale` detection chain.
 
 ### Saving and reloading
 
@@ -508,7 +556,7 @@ Node.js is only needed for the WebUI JavaScript syntax check:
 for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet` and builds with Go 1.24 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include all three READMEs.
+`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet` and builds with Go 1.24 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include all four READMEs.
 
 ## Troubleshooting
 
